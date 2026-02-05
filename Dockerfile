@@ -24,8 +24,10 @@ COPY . .
 # Install dependencies
 RUN composer install --no-interaction --optimize-autoloader --no-dev
 
-# Ensure permissions
-RUN chown -R www-data:www-data storage bootstrap/cache
+# Ensure permissions and create symbolic link
+RUN mkdir -p storage/app/public/profile-photos \
+    && chown -R www-data:www-data storage bootstrap/cache \
+    && chmod -R 775 storage bootstrap/cache
 
 EXPOSE 8000
 
@@ -34,4 +36,4 @@ ENV APP_ENV=production
 ENV APP_DEBUG=false
 ENV LOG_CHANNEL=stderr
 
-CMD ["bash", "-c", "php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=${PORT:-8000}"]
+CMD ["bash", "-c", "rm -rf public/storage && php artisan storage:link && php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=${PORT:-8000}"]
