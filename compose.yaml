@@ -1,0 +1,41 @@
+services:
+    app:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        ports:
+            - '8000:8000'
+        volumes:
+            - '.:/var/www/html'
+        environment:
+            APP_ENV: local
+            APP_DEBUG: 'true'
+            APP_URL: http://localhost:8000
+        depends_on:
+            - mysql
+    mysql:
+        image: 'mysql:8.4'
+        ports:
+            - '3306:3306'
+        environment:
+            MYSQL_ROOT_PASSWORD: password
+            MYSQL_DATABASE: realtorone
+            MYSQL_USER: sail
+            MYSQL_PASSWORD: password
+        volumes:
+            - 'mysql-data:/var/lib/mysql'
+    phpmyadmin:
+        image: phpmyadmin/phpmyadmin
+        ports:
+            - '8080:80'
+        environment:
+            PMA_HOST: mysql
+            PMA_PORT: 3306
+            PMA_USER: sail
+            PMA_PASSWORD: password
+            MYSQL_ROOT_PASSWORD: password
+        depends_on:
+            - mysql
+volumes:
+    mysql-data:
+        driver: local
