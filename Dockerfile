@@ -18,6 +18,20 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /var/www/html
 
+# Copy project files
+COPY . .
+
+# Install dependencies
+RUN composer install --no-interaction --optimize-autoloader --no-dev
+
+# Ensure permissions
+RUN chown -R www-data:www-data storage bootstrap/cache
+
 EXPOSE 8000
 
-CMD ["bash", "-lc", "composer install && php artisan serve --host=0.0.0.0 --port=8000"]
+# Set environment variables for production
+ENV APP_ENV=production
+ENV APP_DEBUG=false
+ENV LOG_CHANNEL=stderr
+
+CMD ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]
