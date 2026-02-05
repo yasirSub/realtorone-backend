@@ -9,7 +9,8 @@ RUN apt-get update \
     libpng-dev \
     libonig-dev \
     libxml2-dev \
-    && docker-php-ext-install pdo pdo_mysql mbstring zip \
+    libpq-dev \
+    && docker-php-ext-install pdo pdo_mysql pdo_pgsql mbstring zip \
     && rm -rf /var/lib/apt/lists/*
 
 # Composer
