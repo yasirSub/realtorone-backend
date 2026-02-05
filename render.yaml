@@ -8,7 +8,7 @@ services:
     dockerfilePath: ./Dockerfile
     envVars:
       - key: APP_KEY
-        sync: false # User will provide this or Render will ask
+        value: base64:RyoftUur2I2QkWmOMighJCX3dE+joyJ29U2W8iGaPiA=
       - key: APP_ENV
         value: production
       - key: APP_DEBUG
