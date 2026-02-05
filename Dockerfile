@@ -8,9 +8,9 @@ RUN apt-get update \
     libzip-dev \
     libpng-dev \
     libonig-dev \
-    libxml2-dev \
     libpq-dev \
-    && docker-php-ext-install pdo pdo_mysql pdo_pgsql mbstring zip \
+    libxml2-dev \
+    && docker-php-ext-install pdo pdo_mysql pdo_pgsql mbstring zip bcmath \
     && rm -rf /var/lib/apt/lists/*
 
 # Composer
@@ -29,9 +29,9 @@ RUN chown -R www-data:www-data storage bootstrap/cache
 
 EXPOSE 8000
 
-# Set environment variables for production
+# Set environment variables for production (Debug enabled for troubleshooting)
 ENV APP_ENV=production
-ENV APP_DEBUG=false
+ENV APP_DEBUG=true
 ENV LOG_CHANNEL=stderr
 
 CMD ["bash", "-c", "php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=${PORT:-8000}"]
