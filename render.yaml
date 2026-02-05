@@ -17,7 +17,7 @@ services:
         fromService:
           type: web
           name: realtorone-backend
-          property: host
+          property: url
       - key: DB_CONNECTION
         value: pgsql
       - key: DB_HOST
