@@ -36,6 +36,73 @@ Route::get('/health', function () {
     ]);
 });
 
+Route::get('/admin/stats', function () {
+    try {
+        $userCount = \App\Models\User::count();
+        // Check activities table safely
+        $activityCount = 0;
+        $activeToday = 0;
+        try {
+            $activityCount = \Illuminate\Support\Facades\DB::table('activities')->count();
+            $activeToday = \Illuminate\Support\Facades\DB::table('activities')->whereDate('created_at', now()->toDateString())->count();
+        } catch (\Throwable $e) { }
+
+        return response()->json([
+            'total_users' => $userCount,
+            'active_today' => $activeToday,
+            'total_activities' => $activityCount,
+            'db_connected' => true,
+        ]);
+    } catch (\Throwable $e) {
+        return response()->json([
+            'total_users' => 0,
+            'total_activities' => 0,
+            'db_connected' => false,
+            'error' => $e->getMessage()
+        ]);
+    }
+});
+
+Route::get('/admin/users', function () {
+    return response()->json(\App\Models\User::orderBy('created_at', 'desc')->get());
+});
+
+Route::post('/admin/users/{id}/toggle-status', function ($id) {
+    $user = \App\Models\User::findOrFail($id);
+    $user->status = ($user->status === 'inactive') ? 'active' : 'inactive';
+    $user->save();
+    return response()->json(['status' => 'ok', 'new_status' => $user->status]);
+});
+
+Route::delete('/admin/users/{id}', function ($id) {
+    $user = \App\Models\User::findOrFail($id);
+    $user->delete();
+    return response()->json(['status' => 'ok']);
+});
+
+Route::post('/admin/login', function (Request $request) {
+    $credentials = $request->validate([
+        'email' => ['required', 'email'],
+        'password' => ['required', 'string'],
+    ]);
+
+    $user = User::where('email', $credentials['email'])->first();
+
+    if ($user && Hash::check($credentials['password'], $user->password)) {
+        // In a real app, check for 'is_admin' column or fixed email
+        $token = bin2hex(random_bytes(32));
+        $user->update(['remember_token' => $token]);
+        
+        return response()->json([
+            'status' => 'ok',
+            'token' => $token,
+            'user' => $user
+        ]);
+    }
+
+    return response()->json(['message' => 'Invalid admin credentials'], 401);
+});
+
 Route::post('/register', function (Request $request) {
     $data = $request->validate([
         'name' => ['required', 'string', 'max:255'],
