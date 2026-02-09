@@ -15,18 +15,20 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        User::query()->delete();
+        User::updateOrCreate(
+            ['email' => 'admin@realtorone.com'],
+            [
+                'name' => 'Admin User',
+                'password' => Hash::make('password123'),
+            ]
+        );
 
-        User::factory()->create([
-            'name' => 'Admin User',
-            'email' => 'admin@realtorone.com',
-            'password' => 'password123',
-        ]);
-
-        User::factory()->create([
-            'name' => 'Realtor One',
-            'email' => 'realtorone@example.com',
-            'password' => 'password123',
-        ]);
+        User::updateOrCreate(
+            ['email' => 'realtorone@example.com'],
+            [
+                'name' => 'Realtor One',
+                'password' => Hash::make('password123'),
+            ]
+        );
     }
 }
