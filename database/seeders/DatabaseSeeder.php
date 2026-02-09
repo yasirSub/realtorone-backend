@@ -18,14 +18,14 @@ class DatabaseSeeder extends Seeder
         User::query()->delete();
 
         User::factory()->create([
-            'name' => 'Realtor One',
-            'email' => 'realtorone@example.com',
+            'name' => 'Admin User',
+            'email' => 'admin@realtorone.com',
             'password' => 'password123',
         ]);
 
         User::factory()->create([
-            'name' => 'Realtor Two',
-            'email' => 'realtortwo@example.com',
+            'name' => 'Realtor One',
+            'email' => 'realtorone@example.com',
             'password' => 'password123',
         ]);
     }
