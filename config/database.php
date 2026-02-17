@@ -98,6 +98,20 @@ return [
             'sslmode' => env('DB_SSLMODE', 'prefer'),
         ],
 
+        'live' => [
+            'driver' => 'pgsql',
+            'host' => env('LIVE_DB_HOST'),
+            'port' => env('LIVE_DB_PORT', '5432'),
+            'database' => env('LIVE_DB_DATABASE'),
+            'username' => env('LIVE_DB_USERNAME'),
+            'password' => env('LIVE_DB_PASSWORD'),
+            'charset' => 'utf8',
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'search_path' => 'public',
+            'sslmode' => 'require',
+        ],
+
         'sqlsrv' => [
             'driver' => 'sqlsrv',
             'url' => env('DB_URL'),

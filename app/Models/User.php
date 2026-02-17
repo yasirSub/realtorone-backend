@@ -49,6 +49,9 @@ class User extends Authenticatable
         // Premium status
         'is_premium',
         'premium_expires_at',
+        'membership_tier',
+        'phone_number',
+        'license_number',
     ];
 
     /**

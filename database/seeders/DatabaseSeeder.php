@@ -16,20 +16,434 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        // Admin User
         User::updateOrCreate(
             ['email' => 'admin@realtorone.com'],
             [
-                'name' => 'Admin User',
+                'name' => 'Root Admin',
                 'password' => Hash::make('password123'),
+                'membership_tier' => 'Gold'
             ]
         );
 
-        User::updateOrCreate(
-            ['email' => 'realtorone@example.com'],
+        // Gold Operator
+        $goldUser = User::updateOrCreate(
+            ['email' => 'myname@gmail.com'],
             [
-                'name' => 'Realtor One',
+                'name' => 'Elite Practitioner',
                 'password' => Hash::make('password123'),
+                'growth_score' => 94,
+                'execution_rate' => 91,
+                'mindset_index' => 9,
+                'current_streak' => 18,
+                'is_premium' => true,
+                'membership_tier' => 'Gold',
+                'diagnosis_scores' => ['branding' => 95, 'lead_gen' => 88, 'sales' => 92, 'mindset' => 94]
             ]
         );
+
+        // Silver Operator
+        $silverUser = User::updateOrCreate(
+            ['email' => 'realtorone@example.com'],
+            [
+                'name' => 'Growth Operator',
+                'password' => Hash::make('password123'),
+                'growth_score' => 76,
+                'execution_rate' => 68,
+                'mindset_index' => 7,
+                'current_streak' => 8,
+                'is_premium' => true,
+                'membership_tier' => 'Silver',
+                'diagnosis_scores' => ['branding' => 70, 'lead_gen' => 75, 'sales' => 65, 'mindset' => 80]
+            ]
+        );
+
+        // Free Operator
+        User::updateOrCreate(
+            ['email' => 'realtortwo@example.com'],
+            [
+                'name' => 'New Practitioner',
+                'password' => Hash::make('password123'),
+                'growth_score' => 32,
+                'execution_rate' => 25,
+                'mindset_index' => 4,
+                'current_streak' => 2,
+                'is_premium' => false,
+                'membership_tier' => 'Free',
+                'diagnosis_scores' => ['branding' => 30, 'lead_gen' => 20, 'sales' => 15, 'mindset' => 40]
+            ]
+        );
+
+        // Diamond Operator
+        $diamondUser = User::updateOrCreate(
+            ['email' => 'diamond@example.com'],
+            [
+                'name' => 'Iconic Leader',
+                'password' => Hash::make('password123'),
+                'growth_score' => 99,
+                'execution_rate' => 98,
+                'mindset_index' => 10,
+                'current_streak' => 365,
+                'is_premium' => true,
+                'membership_tier' => 'Diamond',
+                'diagnosis_scores' => ['branding' => 99, 'lead_gen' => 98, 'sales' => 97, 'mindset' => 100]
+            ]
+        );
+
+        \App\Models\SubscriptionPackage::updateOrCreate(
+            ['name' => 'Free'],
+            ['tier_level' => 0, 'price_monthly' => 0.00, 'description' => 'Standard behavioral tracking.', 'features' => ['Activity Log']]
+        );
+
+        \App\Models\SubscriptionPackage::updateOrCreate(
+            ['name' => 'Silver'],
+            ['tier_level' => 1, 'price_monthly' => 49.00, 'description' => 'Advanced execution tools and deeper analytics.', 'features' => ['Market Analytics', 'Priority Support']]
+        );
+
+        $gold = \App\Models\SubscriptionPackage::updateOrCreate(
+            ['name' => 'Gold'],
+            ['tier_level' => 2, 'price_monthly' => 99.00, 'description' => 'Maximum performance infrastructure for elite operators.', 'features' => ['Pro Mastermind Access', 'dedicated account manager']]
+        );
+
+        $diamond = \App\Models\SubscriptionPackage::updateOrCreate(
+            ['name' => 'Diamond'],
+            ['tier_level' => 3, 'price_monthly' => 299.00, 'description' => 'The ultimate status for industry icons.', 'features' => ['Inner Circle Access', 'Personal Coaching', 'Unlimited Resources']]
+        );
+
+        \App\Models\Coupon::updateOrCreate(
+            ['code' => 'SIR20'],
+            ['discount_percentage' => 20, 'max_uses' => 50]
+        );
+
+        // Assign Gold to myname@gmail.com
+        \App\Models\UserSubscription::updateOrCreate(
+            ['user_id' => $goldUser->id],
+            [
+                'package_id' => $gold->id,
+                'started_at' => now(),
+                'expires_at' => now()->addMonths(12),
+                'status' => 'active',
+                'payment_method' => 'stripe',
+                'payment_id' => 'SEED_GOLD_' . time(),
+                'amount_paid' => 99.00,
+            ]
+        );
+
+        // Assign Silver to realtorone
+        $silver = \App\Models\SubscriptionPackage::where('name', 'Silver')->first();
+        \App\Models\UserSubscription::updateOrCreate(
+            ['user_id' => $silverUser->id],
+            [
+                'package_id' => $silver->id,
+                'started_at' => now(),
+                'expires_at' => now()->addMonths(1),
+                'status' => 'active',
+                'payment_method' => 'paypal',
+                'payment_id' => 'SEED_SILVER_' . time(),
+                'amount_paid' => 49.00,
+            ]
+        );
+
+        // Assign Diamond to diamond user
+        \App\Models\UserSubscription::updateOrCreate(
+            ['user_id' => $diamondUser->id],
+            [
+                'package_id' => $diamond->id,
+                'started_at' => now(),
+                'expires_at' => now()->addMonths(12),
+                'status' => 'active',
+                'payment_method' => 'stripe',
+                'payment_id' => 'SEED_DIAMOND_' . time(),
+                'amount_paid' => 299.00,
+            ]
+        );
+
+        // Seed Courses
+        $courses = [
+            ['title' => 'Real Estate Fundamentals', 'description' => 'Core principles for new agents.', 'min_tier' => 'Free', 'url' => 'https://example.com/video1'],
+            ['title' => 'Digital Branding Mastery', 'description' => 'Build an online presence that converts.', 'min_tier' => 'Free', 'url' => 'https://example.com/video2'],
+            ['title' => 'Advanced Negotiation Tactics', 'description' => 'Close deals with higher margins.', 'min_tier' => 'Silver', 'url' => 'https://example.com/video3'],
+            ['title' => 'Lead Generation Systems', 'description' => 'Automate your client acquisition.', 'min_tier' => 'Silver', 'url' => 'https://example.com/video4'],
+            ['title' => 'Market Analysis & Valuation', 'description' => 'Deep dive into property pricing.', 'min_tier' => 'Silver', 'url' => 'https://example.com/video5'],
+            ['title' => 'Luxury Market Penetration', 'description' => 'Breaking into high-net-worth circles.', 'min_tier' => 'Gold', 'url' => 'https://example.com/video6'],
+            ['title' => 'Team Scaling Dynamics', 'description' => 'From solo agent to agency owner.', 'min_tier' => 'Gold', 'url' => 'https://example.com/video7'],
+            ['title' => 'Investment Portfolio Management', 'description' => 'Advising investors for long-term wealth.', 'min_tier' => 'Gold', 'url' => 'https://example.com/video8'],
+            ['title' => 'Legacy Building & Philanthropy', 'description' => 'Creating a lasting impact beyond business.', 'min_tier' => 'Diamond', 'url' => 'https://example.com/video9'],
+            ['title' => 'Global Real Estate Markets', 'description' => 'International expansion strategies.', 'min_tier' => 'Diamond', 'url' => 'https://example.com/video10'],
+        ];
+
+        foreach ($courses as $course) {
+            \App\Models\Course::updateOrCreate(['title' => $course['title']], $course);
+        }
+
+        // Seed Activity Types from Master Document
+        $activityTypes = [
+            // --- SUBCONSCIOUS ---
+            ['name' => 'Visualization', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'visualization', 'icon' => 'Eye', 'min_tier' => 'Free'],
+            ['name' => 'Affirmations', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'affirmations', 'icon' => 'Repeat', 'min_tier' => 'Free'],
+            ['name' => 'Audio Reprogramming', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'audio_reprogramming', 'icon' => 'Headphones', 'min_tier' => 'Silver'],
+            ['name' => 'Belief Exercise', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'belief_exercise', 'icon' => 'BookOpen', 'min_tier' => 'Gold'],
+            ['name' => 'Identity Statement', 'points' => 5, 'category' => 'subconscious', 'type_key' => 'identity_statement', 'icon' => 'Shield', 'min_tier' => 'Diamond'],
+            
+            // --- CONSCIOUS ---
+            ['name' => 'Cold Calling', 'points' => 8, 'category' => 'conscious', 'type_key' => 'cold_calling', 'icon' => 'Phone', 'min_tier' => 'Free'],
+            ['name' => 'Content Creation', 'points' => 8, 'category' => 'conscious', 'type_key' => 'content_creation', 'icon' => 'Video', 'min_tier' => 'Free'],
+            ['name' => 'DM Conversations', 'points' => 6, 'category' => 'conscious', 'type_key' => 'dm_convos', 'icon' => 'MessageSquare', 'min_tier' => 'Silver'],
+            ['name' => 'Client Meetings', 'points' => 10, 'category' => 'conscious', 'type_key' => 'client_meetings', 'icon' => 'Users', 'min_tier' => 'Silver'],
+            ['name' => 'Deal Negotiation', 'points' => 10, 'category' => 'conscious', 'type_key' => 'negotiation', 'icon' => 'Gavel', 'min_tier' => 'Gold'],
+            ['name' => 'CRM Update', 'points' => 5, 'category' => 'conscious', 'type_key' => 'crm_update', 'icon' => 'Database', 'min_tier' => 'Free'],
+            ['name' => 'Site Visits', 'points' => 10, 'category' => 'conscious', 'type_key' => 'site_visits', 'icon' => 'MapPin', 'min_tier' => 'Gold'],
+            ['name' => 'Luxury Outreach', 'points' => 15, 'category' => 'conscious', 'type_key' => 'luxury_outreach', 'icon' => 'Star', 'min_tier' => 'Diamond'],
+        ];
+
+        foreach ($activityTypes as $at) {
+            \App\Models\ActivityType::updateOrCreate(['type_key' => $at['type_key']], array_merge($at, ['is_global' => true]));
+        }
+
+        // Generate 10 additional users with history
+        $tiers = ['Silver', 'Gold', 'Diamond', 'Free'];
+        $names = ['James Rodriguez', 'Sarah Chen', 'Michael Olayinka', 'Elena Petrova', 'David Wilson', 'Aria Gupta', 'Liam O\'Shea', 'Sophia Kim', 'Lucas Silva', 'Emma Watson'];
+        
+        foreach ($names as $index => $name) {
+            $tier = $tiers[$index % 4];
+            $email = strtolower(str_replace(' ', '.', $name)) . '@example.com';
+            
+            $user = User::updateOrCreate(
+                ['email' => $email],
+                [
+                    'name' => $name,
+                    'password' => Hash::make('password123'),
+                    'membership_tier' => $tier,
+                    'is_premium' => $tier !== 'Free',
+                    'growth_score' => rand(30, 95),
+                    'execution_rate' => rand(40, 98),
+                    'mindset_index' => rand(5, 10),
+                    'current_streak' => rand(1, 30),
+                    'phone_number' => '+1' . rand(100, 999) . rand(100, 999) . rand(1000, 9999),
+                    'license_number' => 'RE' . rand(10000, 99999),
+                    'diagnosis_scores' => [
+                        'branding' => rand(30, 100),
+                        'lead_gen' => rand(30, 100),
+                        'sales' => rand(30, 100),
+                        'mindset' => rand(30, 100)
+                    ]
+                ]
+            );
+
+            // Generate 14 days of history for each user
+            for ($i = 14; $i >= 0; $i--) {
+                $date = now()->subDays($i)->toDateString();
+                
+                // For the last 7 days, we create actual activity records and sync the score
+                $dailyTotal = 0;
+                $consciousSum = 0;
+                $subcoSum = 0;
+                $activityCount = 0;
+
+                if ($i < 7) {
+                    $possibleActivities = [
+                        ['title' => 'Visualization', 'cat' => 'subconscious', 'pts' => 8, 'type' => 'visualization', 'tier' => 'Free'],
+                        ['title' => 'Affirmations', 'cat' => 'subconscious', 'pts' => 6, 'type' => 'affirmations', 'tier' => 'Free'],
+                        ['title' => 'Audio Reprogramming', 'cat' => 'subconscious', 'pts' => 6, 'type' => 'audio_reprogramming', 'tier' => 'Silver'],
+                        ['title' => 'Belief Exercise', 'cat' => 'subconscious', 'pts' => 8, 'type' => 'belief_exercise', 'tier' => 'Gold'],
+                        ['title' => 'Identity Statement', 'cat' => 'subconscious', 'pts' => 5, 'type' => 'identity_statement', 'tier' => 'Diamond'],
+                        ['title' => 'Cold Calling', 'cat' => 'conscious', 'pts' => 8, 'type' => 'cold_calling', 'tier' => 'Free'],
+                        ['title' => 'Content Creation', 'cat' => 'conscious', 'pts' => 8, 'type' => 'content_creation', 'tier' => 'Free'],
+                        ['title' => 'DM Conversations', 'cat' => 'conscious', 'pts' => 6, 'type' => 'dm_convos', 'tier' => 'Silver'],
+                        ['title' => 'Client Meetings', 'cat' => 'conscious', 'pts' => 10, 'type' => 'client_meetings', 'tier' => 'Silver'],
+                        ['title' => 'Deal Negotiation', 'cat' => 'conscious', 'pts' => 10, 'type' => 'negotiation', 'tier' => 'Gold'],
+                        ['title' => 'CRM Update', 'cat' => 'conscious', 'pts' => 5, 'type' => 'crm_update', 'tier' => 'Free'],
+                        ['title' => 'Site Visits', 'cat' => 'conscious', 'pts' => 10, 'type' => 'site_visits', 'tier' => 'Gold'],
+                        ['title' => 'Luxury Outreach', 'cat' => 'conscious', 'pts' => 15, 'type' => 'luxury_outreach', 'tier' => 'Diamond'],
+                    ];
+
+                    // Select 3-5 random activities for this day
+                    $dailySet = array_rand($possibleActivities, rand(3, 5));
+                    if (!is_array($dailySet)) $dailySet = [$dailySet];
+
+                    foreach ($dailySet as $actIdx) {
+                        $actData = $possibleActivities[$actIdx];
+                        $isComp = rand(0, 10) > 2; // 80% completion rate for seed data
+                        
+                        \App\Models\Activity::create([
+                            'user_id' => $user->id,
+                            'title' => $actData['title'],
+                            'type' => $actData['type'],
+                            'category' => $actData['cat'],
+                            'points' => $actData['pts'],
+                            'min_tier' => $actData['tier'],
+                            'scheduled_at' => $date . ' ' . rand(9, 17) . ':00:00',
+                            'is_completed' => $isComp,
+                            'completed_at' => $isComp ? $date . ' ' . rand(10, 18) . ':00:00' : null,
+                        ]);
+
+                        if ($isComp) {
+                            $dailyTotal += $actData['pts'];
+                            if ($actData['cat'] === 'conscious') $consciousSum += 100;
+                            else $subcoSum += 100;
+                        }
+                        $activityCount++;
+                    }
+                } else {
+                    $dailyTotal = rand(40, 90);
+                }
+
+                $conScore = $activityCount > 0 ? floor(($consciousSum / $activityCount)) : rand(60, 90);
+                $subScore = $activityCount > 0 ? floor(($subcoSum / $activityCount)) : rand(60, 90);
+
+                // Metrics
+                \App\Models\PerformanceMetric::updateOrCreate(
+                    ['user_id' => $user->id, 'date' => $date],
+                    [
+                        'subconscious_score' => $subScore,
+                        'conscious_score' => $conScore,
+                        'results_score' => rand(30, 90),
+                        'total_momentum_score' => $dailyTotal,
+                        'leads_generated' => rand(0, 15),
+                        'deals_closed' => rand(0, 3),
+                        'commission_earned' => rand(0, 10000),
+                        'streak_count' => rand(1, 20)
+                    ]
+                );
+            }
+        }
+        // Seed Learning Content
+        if (\Illuminate\Support\Facades\DB::table('learning_content')->count() === 0) {
+            $learningContent = [
+                // Market Fundamentals
+                [
+                    'title' => 'Dubai Market Overview 2026',
+                    'description' => 'A strategic look at the upcoming year in real estate.',
+                    'category' => 'marketFundamentals',
+                    'type' => 'video',
+                    'tier' => 'free',
+                    'duration_minutes' => 45,
+                ],
+                [
+                    'title' => 'The Blueprint Checklist',
+                    'description' => 'Essential documents for every transaction.',
+                    'category' => 'marketFundamentals',
+                    'type' => 'article',
+                    'tier' => 'free',
+                    'duration_minutes' => 10,
+                ],
+                // Lead Systems
+                [
+                    'title' => 'Automated Lead Magnets',
+                    'description' => 'How to build systems that attract clients while you sleep.',
+                    'category' => 'leadSystems',
+                    'type' => 'video',
+                    'tier' => 'free',
+                    'duration_minutes' => 30,
+                ],
+                // HNI Handling (Premium)
+                [
+                    'title' => 'The Billionaire Code',
+                    'description' => 'Ethical psychology for working with HNIs.',
+                    'category' => 'hniHandling',
+                    'type' => 'video',
+                    'tier' => 'premium',
+                    'duration_minutes' => 60,
+                ],
+                [
+                    'title' => 'Private Client Group Protocol',
+                    'description' => 'The exclusive service standard for top-tier clients.',
+                    'category' => 'hniHandling',
+                    'type' => 'audio',
+                    'tier' => 'premium',
+                    'duration_minutes' => 25,
+                ],
+                // Commission Scaling
+                [
+                    'title' => 'Negotiating the 5%',
+                    'description' => 'Never drop your commission again.',
+                    'category' => 'commissionScaling',
+                    'type' => 'video',
+                    'tier' => 'premium',
+                    'duration_minutes' => 40,
+                ],
+            ];
+
+            foreach ($learningContent as $content) {
+                \Illuminate\Support\Facades\DB::table('learning_content')->insert(array_merge($content, [
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]));
+            }
+        }
+
+        // Seed Badges
+        (new \App\Services\BadgeService())->seedDefaultBadges();
+
+        // Seed Results data for users with history
+        $allUsers = User::all();
+        foreach ($allUsers as $user) {
+            // Skip if already has results
+            if (\App\Models\Result::where('user_id', $user->id)->exists()) continue;
+
+            $resultTypes = ['hot_lead', 'deal_closed', 'commission'];
+            $sources = ['bayut', 'property_finder', 'instagram', 'referral', 'cold_call'];
+            $clientNames = ['Ahmed Al Maktoum', 'Sara Khan', 'John Miller', 'Fatima Hassan', 'Raj Patel', 'Maria Santos'];
+            $properties = ['Marina Tower 2BR', 'Palm Jumeirah Villa', 'Downtown Studio', 'JLT 1BR', 'Business Bay 3BR', 'Creek Harbour Penthouse'];
+
+            // Generate 5-15 results per user over the last 60 days
+            $resultCount = rand(5, 15);
+            for ($r = 0; $r < $resultCount; $r++) {
+                $type = $resultTypes[array_rand($resultTypes)];
+                $daysAgo = rand(0, 60);
+                $date = now()->subDays($daysAgo)->toDateString();
+                $value = $type === 'hot_lead' ? 0 : ($type === 'deal_closed' ? rand(5000, 50000) : rand(10000, 200000));
+
+                \App\Models\Result::create([
+                    'user_id' => $user->id,
+                    'date' => $date,
+                    'type' => $type,
+                    'client_name' => $clientNames[array_rand($clientNames)],
+                    'property_name' => $properties[array_rand($properties)],
+                    'source' => $sources[array_rand($sources)],
+                    'value' => $value,
+                    'notes' => $type === 'deal_closed' ? 'Closed successfully' : null,
+                ]);
+            }
+
+            // Generate 2-5 follow-ups
+            $followUpCount = rand(2, 5);
+            for ($f = 0; $f < $followUpCount; $f++) {
+                $dueIn = rand(-3, 7); // some overdue, some upcoming
+                \App\Models\FollowUp::create([
+                    'user_id' => $user->id,
+                    'result_id' => null,
+                    'client_name' => $clientNames[array_rand($clientNames)],
+                    'phone' => '+971' . rand(50, 58) . rand(1000000, 9999999),
+                    'notes' => 'Follow up on property interest',
+                    'priority' => rand(1, 3),
+                    'due_at' => now()->addDays($dueIn),
+                    'is_completed' => $dueIn < -1 ? (rand(0, 1) ? true : false) : false,
+                    'completed_at' => null,
+                ]);
+            }
+        }
+
+        // Seed Weekly Scores
+        foreach ($allUsers as $user) {
+            if (\App\Models\WeeklyScore::where('user_id', $user->id)->exists()) continue;
+
+            for ($w = 4; $w >= 0; $w--) {
+                $weekStart = now()->subWeeks($w)->startOfWeek()->toDateString();
+                $weekEnd = now()->subWeeks($w)->endOfWeek()->toDateString();
+
+                \App\Models\WeeklyScore::create([
+                    'user_id' => $user->id,
+                    'week_start' => $weekStart,
+                    'week_end' => $weekEnd,
+                    'avg_momentum_score' => rand(40, 95) + (rand(0, 99) / 100),
+                    'total_deals' => rand(0, 5),
+                    'total_leads' => rand(2, 20),
+                    'total_commission' => rand(0, 100000),
+                    'days_active' => rand(3, 7),
+                    'consistency_percentage' => rand(50, 100),
+                ]);
+            }
+        }
     }
 }

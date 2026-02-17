@@ -16,16 +16,8 @@ return new class extends Migration
             $table->foreignId('user_id')->constrained()->onDelete('cascade');
             $table->string('title');
             $table->text('description')->nullable();
-            $table->enum('type', [
-                'leadOutreach',
-                'followUp',
-                'meeting',
-                'siteVisit',
-                'morningPriming',
-                'focusDrill',
-                'eveningReflection',
-            ]);
-            $table->enum('category', ['task', 'subconscious']);
+            $table->string('type')->default('leadOutreach');
+            $table->string('category')->default('conscious'); // conscious, subconscious
             $table->integer('duration_minutes')->default(30);
             $table->timestamp('scheduled_at')->nullable();
             $table->boolean('is_completed')->default(false);
