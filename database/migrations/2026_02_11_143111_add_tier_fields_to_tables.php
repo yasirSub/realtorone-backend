@@ -13,13 +13,13 @@ return new class extends Migration
     {
         Schema::table('users', function (Blueprint $table) {
             if (!Schema::hasColumn('users', 'membership_tier')) {
-                $table->string('membership_tier')->default('Free')->after('rank');
+                $table->string('membership_tier')->default('Consultant')->after('rank');
             }
         });
 
         Schema::table('activity_types', function (Blueprint $table) {
             if (!Schema::hasColumn('activity_types', 'min_tier')) {
-                $table->string('min_tier')->default('Free');
+                $table->string('min_tier')->default('Consultant');
             }
         });
     }

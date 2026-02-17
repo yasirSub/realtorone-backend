@@ -22,7 +22,7 @@ class DatabaseSeeder extends Seeder
             [
                 'name' => 'Root Admin',
                 'password' => Hash::make('password123'),
-                'membership_tier' => 'Gold'
+                'membership_tier' => 'Titan'
             ]
         );
 
@@ -37,7 +37,7 @@ class DatabaseSeeder extends Seeder
                 'mindset_index' => 9,
                 'current_streak' => 18,
                 'is_premium' => true,
-                'membership_tier' => 'Gold',
+                'membership_tier' => 'Titan',
                 'diagnosis_scores' => ['branding' => 95, 'lead_gen' => 88, 'sales' => 92, 'mindset' => 94]
             ]
         );
@@ -53,7 +53,7 @@ class DatabaseSeeder extends Seeder
                 'mindset_index' => 7,
                 'current_streak' => 8,
                 'is_premium' => true,
-                'membership_tier' => 'Silver',
+                'membership_tier' => 'Rainmaker',
                 'diagnosis_scores' => ['branding' => 70, 'lead_gen' => 75, 'sales' => 65, 'mindset' => 80]
             ]
         );
@@ -69,7 +69,7 @@ class DatabaseSeeder extends Seeder
                 'mindset_index' => 4,
                 'current_streak' => 2,
                 'is_premium' => false,
-                'membership_tier' => 'Free',
+                'membership_tier' => 'Consultant',
                 'diagnosis_scores' => ['branding' => 30, 'lead_gen' => 20, 'sales' => 15, 'mindset' => 40]
             ]
         );
@@ -85,29 +85,24 @@ class DatabaseSeeder extends Seeder
                 'mindset_index' => 10,
                 'current_streak' => 365,
                 'is_premium' => true,
-                'membership_tier' => 'Diamond',
+                'membership_tier' => 'Titan',
                 'diagnosis_scores' => ['branding' => 99, 'lead_gen' => 98, 'sales' => 97, 'mindset' => 100]
             ]
         );
 
         \App\Models\SubscriptionPackage::updateOrCreate(
-            ['name' => 'Free'],
+            ['name' => 'Consultant'],
             ['tier_level' => 0, 'price_monthly' => 0.00, 'description' => 'Standard behavioral tracking.', 'features' => ['Activity Log']]
         );
 
         \App\Models\SubscriptionPackage::updateOrCreate(
-            ['name' => 'Silver'],
-            ['tier_level' => 1, 'price_monthly' => 49.00, 'description' => 'Advanced execution tools and deeper analytics.', 'features' => ['Market Analytics', 'Priority Support']]
+            ['name' => 'Rainmaker'],
+            ['tier_level' => 1, 'price_monthly' => 210.00, 'description' => 'Advanced execution tools and deeper analytics.', 'features' => ['Market Analytics', 'Priority Support']]
         );
 
-        $gold = \App\Models\SubscriptionPackage::updateOrCreate(
-            ['name' => 'Gold'],
-            ['tier_level' => 2, 'price_monthly' => 99.00, 'description' => 'Maximum performance infrastructure for elite operators.', 'features' => ['Pro Mastermind Access', 'dedicated account manager']]
-        );
-
-        $diamond = \App\Models\SubscriptionPackage::updateOrCreate(
-            ['name' => 'Diamond'],
-            ['tier_level' => 3, 'price_monthly' => 299.00, 'description' => 'The ultimate status for industry icons.', 'features' => ['Inner Circle Access', 'Personal Coaching', 'Unlimited Resources']]
+        $titanGold = \App\Models\SubscriptionPackage::updateOrCreate(
+            ['name' => 'Titan'],
+            ['tier_level' => 2, 'price_monthly' => 420.00, 'description' => 'Maximum performance infrastructure for elite operators. Includes all premium features.', 'features' => ['Pro Mastermind Access', 'Dedicated Account Manager', 'Inner Circle Access', 'Personal Coaching', 'Unlimited Resources']]
         );
 
         \App\Models\Coupon::updateOrCreate(
@@ -115,85 +110,95 @@ class DatabaseSeeder extends Seeder
             ['discount_percentage' => 20, 'max_uses' => 50]
         );
 
-        // Assign Gold to myname@gmail.com
+        // Assign Titan to myname@gmail.com
         \App\Models\UserSubscription::updateOrCreate(
             ['user_id' => $goldUser->id],
             [
-                'package_id' => $gold->id,
+                'package_id' => $titanGold->id,
                 'started_at' => now(),
                 'expires_at' => now()->addMonths(12),
                 'status' => 'active',
                 'payment_method' => 'stripe',
-                'payment_id' => 'SEED_GOLD_' . time(),
-                'amount_paid' => 99.00,
+                'payment_id' => 'SEED_TITAN_GOLD_' . time(),
+                'amount_paid' => 420.00,
             ]
         );
 
-        // Assign Silver to realtorone
-        $silver = \App\Models\SubscriptionPackage::where('name', 'Silver')->first();
+        // Assign Rainmaker to realtorone
+        $rainmaker = \App\Models\SubscriptionPackage::where('name', 'Rainmaker')->first();
         \App\Models\UserSubscription::updateOrCreate(
             ['user_id' => $silverUser->id],
             [
-                'package_id' => $silver->id,
+                'package_id' => $rainmaker->id,
                 'started_at' => now(),
                 'expires_at' => now()->addMonths(1),
                 'status' => 'active',
                 'payment_method' => 'paypal',
-                'payment_id' => 'SEED_SILVER_' . time(),
-                'amount_paid' => 49.00,
+                'payment_id' => 'SEED_RAINMAKER_' . time(),
+                'amount_paid' => 210.00,
             ]
         );
 
-        // Assign Diamond to diamond user
+        // Assign Titan to diamond user (merged Diamond into Titan)
         \App\Models\UserSubscription::updateOrCreate(
             ['user_id' => $diamondUser->id],
             [
-                'package_id' => $diamond->id,
+                'package_id' => $titanGold->id,
                 'started_at' => now(),
                 'expires_at' => now()->addMonths(12),
                 'status' => 'active',
                 'payment_method' => 'stripe',
-                'payment_id' => 'SEED_DIAMOND_' . time(),
-                'amount_paid' => 299.00,
+                'payment_id' => 'SEED_TITAN_GOLD_' . time(),
+                'amount_paid' => 420.00,
             ]
         );
 
-        // Seed Courses
-        $courses = [
-            ['title' => 'Real Estate Fundamentals', 'description' => 'Core principles for new agents.', 'min_tier' => 'Free', 'url' => 'https://example.com/video1'],
-            ['title' => 'Digital Branding Mastery', 'description' => 'Build an online presence that converts.', 'min_tier' => 'Free', 'url' => 'https://example.com/video2'],
-            ['title' => 'Advanced Negotiation Tactics', 'description' => 'Close deals with higher margins.', 'min_tier' => 'Silver', 'url' => 'https://example.com/video3'],
-            ['title' => 'Lead Generation Systems', 'description' => 'Automate your client acquisition.', 'min_tier' => 'Silver', 'url' => 'https://example.com/video4'],
-            ['title' => 'Market Analysis & Valuation', 'description' => 'Deep dive into property pricing.', 'min_tier' => 'Silver', 'url' => 'https://example.com/video5'],
-            ['title' => 'Luxury Market Penetration', 'description' => 'Breaking into high-net-worth circles.', 'min_tier' => 'Gold', 'url' => 'https://example.com/video6'],
-            ['title' => 'Team Scaling Dynamics', 'description' => 'From solo agent to agency owner.', 'min_tier' => 'Gold', 'url' => 'https://example.com/video7'],
-            ['title' => 'Investment Portfolio Management', 'description' => 'Advising investors for long-term wealth.', 'min_tier' => 'Gold', 'url' => 'https://example.com/video8'],
-            ['title' => 'Legacy Building & Philanthropy', 'description' => 'Creating a lasting impact beyond business.', 'min_tier' => 'Diamond', 'url' => 'https://example.com/video9'],
-            ['title' => 'Global Real Estate Markets', 'description' => 'International expansion strategies.', 'min_tier' => 'Diamond', 'url' => 'https://example.com/video10'],
+        // Seed Courses - Module Structure
+        // Module 1: Invisible Influence Belief + Identity (All tiers)
+        $module1Courses = [
+            ['title' => 'Identity Declaration', 'description' => 'Define your professional identity and core values.', 'min_tier' => 'Consultant', 'module_number' => 1, 'sequence' => 1, 'url' => 'https://example.com/module1-identity'],
+            ['title' => 'Revenue Activation', 'description' => 'Activate your revenue-generating mindset and beliefs.', 'min_tier' => 'Consultant', 'module_number' => 1, 'sequence' => 2, 'url' => 'https://example.com/module1-revenue'],
+            ['title' => 'Belief System Foundation', 'description' => 'Build the foundation of your success beliefs.', 'min_tier' => 'Consultant', 'module_number' => 1, 'sequence' => 3, 'url' => 'https://example.com/module1-beliefs'],
         ];
 
-        foreach ($courses as $course) {
+        // Module 2: Million Dirham Beliefs (Rainmaker+)
+        $module2Courses = [
+            ['title' => 'Million Dirham Mindset', 'description' => 'Upgrade to unlock: Develop beliefs that attract high-value opportunities.', 'min_tier' => 'Rainmaker', 'module_number' => 2, 'sequence' => 1, 'url' => 'https://example.com/module2-mindset'],
+            ['title' => 'Wealth Consciousness', 'description' => 'Upgrade to unlock: Shift your consciousness to attract abundance.', 'min_tier' => 'Rainmaker', 'module_number' => 2, 'sequence' => 2, 'url' => 'https://example.com/module2-wealth'],
+            ['title' => 'Elite Operator Identity', 'description' => 'Upgrade to unlock: Embody the identity of a top-performing agent.', 'min_tier' => 'Rainmaker', 'module_number' => 2, 'sequence' => 3, 'url' => 'https://example.com/module2-identity'],
+        ];
+
+        // Module 3: Cold Calling System Elite Execution (Titan only)
+        $module3Courses = [
+            ['title' => 'Cold Calling System', 'description' => 'Elite execution: Master the art of high-converting cold calls.', 'min_tier' => 'Titan', 'module_number' => 3, 'sequence' => 1, 'url' => 'https://example.com/module3-coldcalling'],
+            ['title' => 'Objection Handling Mastery', 'description' => 'Elite execution: Turn objections into opportunities.', 'min_tier' => 'Titan', 'module_number' => 3, 'sequence' => 2, 'url' => 'https://example.com/module3-objections'],
+            ['title' => 'Closing Techniques', 'description' => 'Elite execution: Advanced closing strategies for high-value deals.', 'min_tier' => 'Titan', 'module_number' => 3, 'sequence' => 3, 'url' => 'https://example.com/module3-closing'],
+        ];
+
+        $allCourses = array_merge($module1Courses, $module2Courses, $module3Courses);
+
+        foreach ($allCourses as $course) {
             \App\Models\Course::updateOrCreate(['title' => $course['title']], $course);
         }
 
         // Seed Activity Types from Master Document
         $activityTypes = [
             // --- SUBCONSCIOUS ---
-            ['name' => 'Visualization', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'visualization', 'icon' => 'Eye', 'min_tier' => 'Free'],
-            ['name' => 'Affirmations', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'affirmations', 'icon' => 'Repeat', 'min_tier' => 'Free'],
-            ['name' => 'Audio Reprogramming', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'audio_reprogramming', 'icon' => 'Headphones', 'min_tier' => 'Silver'],
-            ['name' => 'Belief Exercise', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'belief_exercise', 'icon' => 'BookOpen', 'min_tier' => 'Gold'],
-            ['name' => 'Identity Statement', 'points' => 5, 'category' => 'subconscious', 'type_key' => 'identity_statement', 'icon' => 'Shield', 'min_tier' => 'Diamond'],
+            ['name' => 'Visualization', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'visualization', 'icon' => 'Eye', 'min_tier' => 'Consultant'],
+            ['name' => 'Affirmations', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'affirmations', 'icon' => 'Repeat', 'min_tier' => 'Consultant'],
+            ['name' => 'Audio Reprogramming', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'audio_reprogramming', 'icon' => 'Headphones', 'min_tier' => 'Rainmaker'],
+            ['name' => 'Belief Exercise', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'belief_exercise', 'icon' => 'BookOpen', 'min_tier' => 'Titan'],
+            ['name' => 'Identity Statement', 'points' => 5, 'category' => 'subconscious', 'type_key' => 'identity_statement', 'icon' => 'Shield', 'min_tier' => 'Titan'],
             
             // --- CONSCIOUS ---
-            ['name' => 'Cold Calling', 'points' => 8, 'category' => 'conscious', 'type_key' => 'cold_calling', 'icon' => 'Phone', 'min_tier' => 'Free'],
-            ['name' => 'Content Creation', 'points' => 8, 'category' => 'conscious', 'type_key' => 'content_creation', 'icon' => 'Video', 'min_tier' => 'Free'],
-            ['name' => 'DM Conversations', 'points' => 6, 'category' => 'conscious', 'type_key' => 'dm_convos', 'icon' => 'MessageSquare', 'min_tier' => 'Silver'],
-            ['name' => 'Client Meetings', 'points' => 10, 'category' => 'conscious', 'type_key' => 'client_meetings', 'icon' => 'Users', 'min_tier' => 'Silver'],
-            ['name' => 'Deal Negotiation', 'points' => 10, 'category' => 'conscious', 'type_key' => 'negotiation', 'icon' => 'Gavel', 'min_tier' => 'Gold'],
-            ['name' => 'CRM Update', 'points' => 5, 'category' => 'conscious', 'type_key' => 'crm_update', 'icon' => 'Database', 'min_tier' => 'Free'],
-            ['name' => 'Site Visits', 'points' => 10, 'category' => 'conscious', 'type_key' => 'site_visits', 'icon' => 'MapPin', 'min_tier' => 'Gold'],
-            ['name' => 'Luxury Outreach', 'points' => 15, 'category' => 'conscious', 'type_key' => 'luxury_outreach', 'icon' => 'Star', 'min_tier' => 'Diamond'],
+            ['name' => 'Cold Calling', 'points' => 8, 'category' => 'conscious', 'type_key' => 'cold_calling', 'icon' => 'Phone', 'min_tier' => 'Consultant'],
+            ['name' => 'Content Creation', 'points' => 8, 'category' => 'conscious', 'type_key' => 'content_creation', 'icon' => 'Video', 'min_tier' => 'Consultant'],
+            ['name' => 'DM Conversations', 'points' => 6, 'category' => 'conscious', 'type_key' => 'dm_convos', 'icon' => 'MessageSquare', 'min_tier' => 'Rainmaker'],
+            ['name' => 'Client Meetings', 'points' => 10, 'category' => 'conscious', 'type_key' => 'client_meetings', 'icon' => 'Users', 'min_tier' => 'Rainmaker'],
+            ['name' => 'Deal Negotiation', 'points' => 10, 'category' => 'conscious', 'type_key' => 'negotiation', 'icon' => 'Gavel', 'min_tier' => 'Titan'],
+            ['name' => 'CRM Update', 'points' => 5, 'category' => 'conscious', 'type_key' => 'crm_update', 'icon' => 'Database', 'min_tier' => 'Consultant'],
+            ['name' => 'Site Visits', 'points' => 10, 'category' => 'conscious', 'type_key' => 'site_visits', 'icon' => 'MapPin', 'min_tier' => 'Titan'],
+            ['name' => 'Luxury Outreach', 'points' => 15, 'category' => 'conscious', 'type_key' => 'luxury_outreach', 'icon' => 'Star', 'min_tier' => 'Titan'],
         ];
 
         foreach ($activityTypes as $at) {
@@ -201,11 +206,16 @@ class DatabaseSeeder extends Seeder
         }
 
         // Generate 10 additional users with history
-        $tiers = ['Silver', 'Gold', 'Diamond', 'Free'];
+        $tiers = ['Rainmaker', 'Titan', 'Titan', 'Consultant'];
         $names = ['James Rodriguez', 'Sarah Chen', 'Michael Olayinka', 'Elena Petrova', 'David Wilson', 'Aria Gupta', 'Liam O\'Shea', 'Sophia Kim', 'Lucas Silva', 'Emma Watson'];
         
         foreach ($names as $index => $name) {
             $tier = $tiers[$index % 4];
+            // Remove "GOLD" from tier names
+            $tier = str_replace([' - GOLD', '- GOLD', ' GOLD', 'GOLD'], '', $tier);
+            if (empty($tier) || $tier === 'Titan') {
+                $tier = 'Titan';
+            }
             $email = strtolower(str_replace(' ', '.', $name)) . '@example.com';
             
             $user = User::updateOrCreate(
@@ -214,7 +224,7 @@ class DatabaseSeeder extends Seeder
                     'name' => $name,
                     'password' => Hash::make('password123'),
                     'membership_tier' => $tier,
-                    'is_premium' => $tier !== 'Free',
+                    'is_premium' => $tier !== 'Consultant',
                     'growth_score' => rand(30, 95),
                     'execution_rate' => rand(40, 98),
                     'mindset_index' => rand(5, 10),
@@ -242,19 +252,19 @@ class DatabaseSeeder extends Seeder
 
                 if ($i < 7) {
                     $possibleActivities = [
-                        ['title' => 'Visualization', 'cat' => 'subconscious', 'pts' => 8, 'type' => 'visualization', 'tier' => 'Free'],
-                        ['title' => 'Affirmations', 'cat' => 'subconscious', 'pts' => 6, 'type' => 'affirmations', 'tier' => 'Free'],
-                        ['title' => 'Audio Reprogramming', 'cat' => 'subconscious', 'pts' => 6, 'type' => 'audio_reprogramming', 'tier' => 'Silver'],
-                        ['title' => 'Belief Exercise', 'cat' => 'subconscious', 'pts' => 8, 'type' => 'belief_exercise', 'tier' => 'Gold'],
-                        ['title' => 'Identity Statement', 'cat' => 'subconscious', 'pts' => 5, 'type' => 'identity_statement', 'tier' => 'Diamond'],
-                        ['title' => 'Cold Calling', 'cat' => 'conscious', 'pts' => 8, 'type' => 'cold_calling', 'tier' => 'Free'],
-                        ['title' => 'Content Creation', 'cat' => 'conscious', 'pts' => 8, 'type' => 'content_creation', 'tier' => 'Free'],
-                        ['title' => 'DM Conversations', 'cat' => 'conscious', 'pts' => 6, 'type' => 'dm_convos', 'tier' => 'Silver'],
-                        ['title' => 'Client Meetings', 'cat' => 'conscious', 'pts' => 10, 'type' => 'client_meetings', 'tier' => 'Silver'],
-                        ['title' => 'Deal Negotiation', 'cat' => 'conscious', 'pts' => 10, 'type' => 'negotiation', 'tier' => 'Gold'],
-                        ['title' => 'CRM Update', 'cat' => 'conscious', 'pts' => 5, 'type' => 'crm_update', 'tier' => 'Free'],
-                        ['title' => 'Site Visits', 'cat' => 'conscious', 'pts' => 10, 'type' => 'site_visits', 'tier' => 'Gold'],
-                        ['title' => 'Luxury Outreach', 'cat' => 'conscious', 'pts' => 15, 'type' => 'luxury_outreach', 'tier' => 'Diamond'],
+                        ['title' => 'Visualization', 'cat' => 'subconscious', 'pts' => 8, 'type' => 'visualization', 'tier' => 'Consultant'],
+                        ['title' => 'Affirmations', 'cat' => 'subconscious', 'pts' => 6, 'type' => 'affirmations', 'tier' => 'Consultant'],
+                        ['title' => 'Audio Reprogramming', 'cat' => 'subconscious', 'pts' => 6, 'type' => 'audio_reprogramming', 'tier' => 'Rainmaker'],
+                        ['title' => 'Belief Exercise', 'cat' => 'subconscious', 'pts' => 8, 'type' => 'belief_exercise', 'tier' => 'Titan'],
+                        ['title' => 'Identity Statement', 'cat' => 'subconscious', 'pts' => 5, 'type' => 'identity_statement', 'tier' => 'Titan'],
+                        ['title' => 'Cold Calling', 'cat' => 'conscious', 'pts' => 8, 'type' => 'cold_calling', 'tier' => 'Consultant'],
+                        ['title' => 'Content Creation', 'cat' => 'conscious', 'pts' => 8, 'type' => 'content_creation', 'tier' => 'Consultant'],
+                        ['title' => 'DM Conversations', 'cat' => 'conscious', 'pts' => 6, 'type' => 'dm_convos', 'tier' => 'Rainmaker'],
+                        ['title' => 'Client Meetings', 'cat' => 'conscious', 'pts' => 10, 'type' => 'client_meetings', 'tier' => 'Rainmaker'],
+                        ['title' => 'Deal Negotiation', 'cat' => 'conscious', 'pts' => 10, 'type' => 'negotiation', 'tier' => 'Titan'],
+                        ['title' => 'CRM Update', 'cat' => 'conscious', 'pts' => 5, 'type' => 'crm_update', 'tier' => 'Consultant'],
+                        ['title' => 'Site Visits', 'cat' => 'conscious', 'pts' => 10, 'type' => 'site_visits', 'tier' => 'Titan'],
+                        ['title' => 'Luxury Outreach', 'cat' => 'conscious', 'pts' => 15, 'type' => 'luxury_outreach', 'tier' => 'Titan'],
                     ];
 
                     // Select 3-5 random activities for this day

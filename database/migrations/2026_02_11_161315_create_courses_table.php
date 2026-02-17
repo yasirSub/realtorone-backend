@@ -16,7 +16,7 @@ return new class extends Migration
             $table->string('title');
             $table->text('description')->nullable();
             $table->string('url')->nullable();
-            $table->enum('min_tier', ['Free', 'Silver', 'Gold', 'Diamond'])->default('Free');
+            $table->enum('min_tier', ['Consultant', 'Rainmaker', 'Titan'])->default('Consultant');
             $table->timestamps();
         });
     }

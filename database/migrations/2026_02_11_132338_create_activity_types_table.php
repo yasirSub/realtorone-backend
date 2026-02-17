@@ -20,7 +20,7 @@ return new class extends Migration
             $table->integer('points')->default(0);
             $table->boolean('is_global')->default(false);
             $table->foreignId('user_id')->nullable()->constrained()->onDelete('cascade');
-            $table->string('min_tier')->default('Free');
+            $table->string('min_tier')->default('Consultant');
             $table->string('icon')->nullable();
             $table->timestamps();
         });

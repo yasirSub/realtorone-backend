@@ -252,39 +252,122 @@ Route::get('/courses', function (Request $request) {
         ->orderBy('expires_at', 'desc')
         ->first();
 
-    $userTierName = $sub ? $sub->package->name : 'Free';
+    $userTierName = $sub ? $sub->package->name : 'Consultant';
     
     // Mission Tier Hierarchy
     $tierRanks = [
-        'free' => 0,
-        'silver' => 1,
-        'gold' => 2,
-        'diamond' => 3
+        'consultant' => 0,
+        'rainmaker' => 1,
+        'titan' => 2
     ];
 
     $userTierKey = strtolower($userTierName);
     $currentRank = $tierRanks[$userTierKey] ?? 0;
 
-    // Return all courses from the main management table, flagged by clearance level
-    $courses = \App\Models\Course::all()->map(function($course) use ($tierRanks, $currentRank) {
+    // Get user's course progress
+    $userProgress = DB::table('course_progress')
+        ->where('user_id', $user->id)
+        ->get()
+        ->keyBy('course_id');
+
+    // Get all courses ordered by module and sequence
+    $allCourses = \App\Models\Course::orderBy('module_number')
+        ->orderBy('sequence')
+        ->get();
+
+    // Group courses by module
+    $modules = [];
+    $moduleTierRequirements = [
+        1 => 'consultant',  // Module 1: All tiers
+        2 => 'rainmaker',   // Module 2: Rainmaker+
+        3 => 'titan'        // Module 3: Titan only
+    ];
+
+    foreach ($allCourses as $course) {
+        $moduleNum = $course->module_number ?? 1;
         $courseRank = $tierRanks[strtolower($course->min_tier)] ?? 0;
-        return [
+        
+        // Check if module is accessible based on tier
+        $moduleRequiredTier = $moduleTierRequirements[$moduleNum] ?? 'consultant';
+        $moduleRequiredRank = $tierRanks[$moduleRequiredTier] ?? 0;
+        $isModuleLocked = $currentRank < $moduleRequiredRank;
+        
+        // Check if previous module is completed (for sequential unlocking)
+        $isSequentiallyLocked = false;
+        if ($moduleNum > 1) {
+            $prevModuleNum = $moduleNum - 1;
+            $prevModuleCourses = $allCourses->where('module_number', $prevModuleNum);
+            $prevModuleCompleted = $prevModuleCourses->every(function($prevCourse) use ($userProgress) {
+                $progress = $userProgress->get($prevCourse->id);
+                return $progress && $progress->is_completed;
+            });
+            $isSequentiallyLocked = !$prevModuleCompleted && $prevModuleCourses->isNotEmpty();
+        }
+        
+        // Course is locked if: tier locked OR module locked OR sequentially locked
+        $isLocked = ($courseRank > $currentRank) || $isModuleLocked || $isSequentiallyLocked;
+        
+        $progress = $userProgress->get($course->id);
+        
+        if (!isset($modules[$moduleNum])) {
+            $modules[$moduleNum] = [
+                'module_number' => $moduleNum,
+                'module_name' => "Module $moduleNum",
+                'is_locked' => $isModuleLocked || $isSequentiallyLocked,
+                'required_tier' => ucfirst($moduleRequiredTier),
+                'courses' => []
+            ];
+        }
+        
+        $modules[$moduleNum]['courses'][] = [
             'id' => $course->id,
             'title' => $course->title,
             'description' => $course->description,
             'url' => $course->url,
             'min_tier' => $course->min_tier,
-            'is_locked' => $courseRank > $currentRank
+            'module_number' => $moduleNum,
+            'sequence' => $course->sequence ?? 0,
+            'is_locked' => $isLocked,
+            'progress_percent' => $progress ? $progress->progress_percent : 0,
+            'is_completed' => $progress ? (bool)$progress->is_completed : false,
         ];
-    })->values();
+    }
+
+    // Convert to indexed array
+    $modulesArray = array_values($modules);
 
     return response()->json([
         'success' => true, 
-        'data' => $courses,
+        'data' => $modulesArray,
         'user_tier' => $userTierName
     ]);
 });
 
+// Update course progress
+Route::post('/courses/{id}/progress', function (Request $request, $id) {
+    $user = getAuthUser($request);
+    if (!$user) return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+
+    $validated = $request->validate([
+        'progress_percent' => 'required|integer|min:0|max:100',
+        'is_completed' => 'nullable|boolean'
+    ]);
+
+    $progress = DB::table('course_progress')
+        ->updateOrInsert(
+            ['user_id' => $user->id, 'course_id' => $id],
+            [
+                'progress_percent' => $validated['progress_percent'],
+                'is_completed' => $validated['is_completed'] ?? ($validated['progress_percent'] >= 100),
+                'completed_at' => ($validated['is_completed'] ?? ($validated['progress_percent'] >= 100)) ? now() : null,
+                'last_accessed_at' => now(),
+                'updated_at' => now(),
+                'created_at' => DB::raw('COALESCE(created_at, NOW())')
+            ]
+        );
+
+    return response()->json(['success' => true, 'message' => 'Progress updated']);
+});
 
 // Add this to the protected group
 Route::get('/user/rewards', function (Request $request) {
@@ -307,6 +390,48 @@ Route::get('/user/rewards', function (Request $request) {
         'success' => true,
         'total_rewards' => (int) $totalPoints,
         'breakdown' => $breakdown
+    ]);
+});
+
+// Points history: all completed activities with date, activity name, and points
+Route::get('/user/points-history', function (Request $request) {
+    $user = getAuthUser($request);
+    if (!$user) return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+
+    $limit = $request->get('limit', 100); // Default to last 100 entries
+    $offset = $request->get('offset', 0);
+
+    $history = DB::table('activities')
+        ->where('user_id', $user->id)
+        ->where('is_completed', true)
+        ->whereNotNull('points')
+        ->where('points', '>', 0)
+        ->select(
+            'id',
+            'title',
+            'type',
+            'category',
+            'points',
+            DB::raw('DATE(completed_at) as date'),
+            'completed_at'
+        )
+        ->orderBy('completed_at', 'desc')
+        ->limit($limit)
+        ->offset($offset)
+        ->get();
+
+    $totalPoints = DB::table('activities')
+        ->where('user_id', $user->id)
+        ->where('is_completed', true)
+        ->whereNotNull('points')
+        ->where('points', '>', 0)
+        ->sum('points');
+
+    return response()->json([
+        'success' => true,
+        'data' => $history,
+        'total_points' => (int) $totalPoints,
+        'count' => count($history),
     ]);
 });
 
@@ -334,7 +459,7 @@ Route::get('/user/subscription', function (Request $request) {
         'success' => true,
         'data' => $sub,
         'is_premium' => (bool) $sub,
-        'membership_tier' => $sub ? $sub->package->name : 'Free',
+        'membership_tier' => $sub ? $sub->package->name : 'Consultant',
         'expires_at' => $sub ? $sub->expires_at->toIso8601String() : null,
     ]);
 });
@@ -528,7 +653,7 @@ Route::post('/admin/activity-types', function (Request $request) {
         'type_key' => Str::slug($data['name'], '_'),
         'icon' => $data['icon'] ?? 'Activity',
         'is_global' => true,
-        'min_tier' => $data['min_tier'] ?? 'Free',
+        'min_tier' => $data['min_tier'] ?? 'Consultant',
     ]);
 
     return response()->json(['success' => true, 'data' => $activityType]);
@@ -739,7 +864,7 @@ Route::group(['middleware' => []], function () {
                 'rank' => $user->rank,
                 'current_streak' => $user->current_streak ?? 0,
                 'is_premium' => (bool) $user->is_premium,
-                'membership_tier' => $user->membership_tier ?? 'Free',
+                'membership_tier' => $user->membership_tier ?? 'Consultant',
                 'onboarding_step' => (int) ($user->onboarding_step ?? 0),
                 'total_rewards' => (int) DB::table('activities')
                     ->where('user_id', $user->id)
@@ -954,9 +1079,14 @@ Route::group(['middleware' => []], function () {
             return response()->json(['success' => false, 'message' => 'Activity not found'], 404);
         }
 
+        // Award points for this activity type when completing
+        $service = new \App\Services\PerformanceService();
+        $points = $service->getActivityPoints($activity->type);
+
         DB::table('activities')->where('id', $id)->update([
             'is_completed' => true,
             'completed_at' => now(),
+            'points' => $points,
             'updated_at' => now(),
         ]);
 
@@ -976,10 +1106,18 @@ Route::group(['middleware' => []], function () {
             'execution_rate' => min(100, $user->execution_rate + 2),
         ]);
 
+        // Recalculate daily score and award badges (keeps dashboard in sync)
+        $metric = $service->calculateDailyScore($user);
+        $badgeService = new \App\Services\BadgeService();
+        $newBadges = $badgeService->checkAndAwardBadges($user);
+
         return response()->json([
             'success' => true,
             'message' => 'Activity completed',
             'current_streak' => $user->current_streak,
+            'points_awarded' => $points,
+            'daily_score' => $metric->total_momentum_score,
+            'new_badges' => $newBadges,
         ]);
     });
 

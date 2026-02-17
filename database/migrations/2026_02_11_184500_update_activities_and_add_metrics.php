@@ -20,7 +20,7 @@ return new class extends Migration
                 $table->decimal('value', 15, 2)->nullable()->after('quantity');
             }
             if (!Schema::hasColumn('activities', 'min_tier')) {
-                $table->string('min_tier')->default('Free')->after('value');
+                $table->string('min_tier')->default('Consultant')->after('value');
             }
         });
 

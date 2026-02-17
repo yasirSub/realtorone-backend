@@ -21,9 +21,11 @@ class CourseController extends Controller
     {
         $validated = $request->validate([
             'title' => 'required|string',
-            'min_tier' => 'required|in:Free,Silver,Gold,Diamond',
+            'min_tier' => 'required|in:Consultant,Rainmaker,Titan',
             'url' => 'nullable|url',
-            'description' => 'nullable|string'
+            'description' => 'nullable|string',
+            'module_number' => 'nullable|integer|min:1|max:3',
+            'sequence' => 'nullable|integer|min:0'
         ]);
 
         $course = \App\Models\Course::create($validated);
