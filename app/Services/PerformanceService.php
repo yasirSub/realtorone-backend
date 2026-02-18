@@ -129,17 +129,13 @@ class PerformanceService
 
         // Fallback for legacy/hardcoded types if not in DB
         $points = [
-            // Subconscious
-            'visualization' => 8,
-            'affirmations' => 6,
-            'gratitude' => 6,
-            'mindsetTraining' => 8,
-            'audioReprogramming' => 6,
-            'webinar' => 10,
-            'beliefExercise' => 8,
-            'calmReset' => 5,
-            'identityStatement' => 5,
-            'morningRitual' => 6,
+            // Identity Conditioning (Min 2, Max 40)
+            'journaling' => 4,
+            'webinar' => 12,
+            'visualization' => 10,
+            'affirmations' => 8,
+            'inner_game_audio' => 8,
+            'guided_reset' => 6,
             
             // Conscious
             'coldCalling' => 8,

@@ -14,18 +14,19 @@ function getAuthUser(Request $request) {
 }
 
 function seedDefaultActivityTypes() {
+    // Identity Conditioning: Min 2 activities, Max Score 40 (from diagram)
+    $identityKeys = ['journaling', 'webinar', 'visualization', 'affirmations', 'inner_game_audio', 'guided_reset'];
+    \App\Models\ActivityType::where('category', 'subconscious')->whereNotIn('type_key', $identityKeys)->delete();
+
     $types = [
-        // Subconscious (Part A)
-        ['name' => 'Visualization', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'visualization', 'icon' => 'Eye'],
-        ['name' => 'Affirmations', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'affirmations', 'icon' => 'Repeat'],
-        ['name' => 'Gratitude Journaling', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'gratitude', 'icon' => 'BookHeart'],
-        ['name' => 'Mindset Training', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'mindset_training', 'icon' => 'Brain'],
-        ['name' => 'Audio Reprogramming', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'audio_reprogramming', 'icon' => 'Headphones'],
-        ['name' => 'Webinar Attendance', 'points' => 10, 'category' => 'subconscious', 'type_key' => 'webinar', 'icon' => 'Video'],
-        ['name' => 'Belief Exercise', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'belief_exercise', 'icon' => 'PenTool'],
-        ['name' => 'Calm Reset', 'points' => 5, 'category' => 'subconscious', 'type_key' => 'calm_reset', 'icon' => 'Wind'],
-        ['name' => 'Identity Statement', 'points' => 5, 'category' => 'subconscious', 'type_key' => 'identity_statement', 'icon' => 'UserCheck'],
-        ['name' => 'Morning Focus Ritual', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'morning_ritual', 'icon' => 'Sun'],
+        // 1. Manual Identity Activities
+        ['name' => 'Journaling', 'points' => 4, 'category' => 'subconscious', 'type_key' => 'journaling', 'icon' => 'BookHeart'],
+        ['name' => 'Webinar', 'points' => 12, 'category' => 'subconscious', 'type_key' => 'webinar', 'icon' => 'Video'],
+        // 2. Verified Identity Activities
+        ['name' => 'Visualization', 'points' => 10, 'category' => 'subconscious', 'type_key' => 'visualization', 'icon' => 'Eye'],
+        ['name' => 'Affirmations', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'affirmations', 'icon' => 'Repeat'],
+        ['name' => 'Inner Game Audio', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'inner_game_audio', 'icon' => 'Headphones'],
+        ['name' => 'Guided Reset', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'guided_reset', 'icon' => 'Wind'],
 
         // Conscious (Part B)
         ['name' => 'Cold Calling', 'points' => 8, 'category' => 'conscious', 'type_key' => 'cold_calling', 'icon' => 'Phone'],
@@ -596,17 +597,30 @@ Route::get('/admin/momentum-leaders', function () {
 
 Route::get('/activity-types', function (Request $request) {
     seedDefaultActivityTypes();
-    
+
     $user = getAuthUser($request);
-    
-    // Get global types OR user specific types
+
     $query = \App\Models\ActivityType::where('is_global', true);
-    
     if ($user) {
         $query->orWhere('user_id', $user->id);
     }
-    
-    return response()->json(['success' => true, 'data' => $query->orderBy('category')->orderBy('name')->get()]);
+    $types = $query->orderBy('category')->orderBy('name')->get();
+
+    // Identity Conditioning: append subcategory (manual | verified) for grouping in UI
+    $identitySubcategory = [
+        'journaling' => 'manual', 'webinar' => 'manual',
+        'visualization' => 'verified', 'affirmations' => 'verified',
+        'inner_game_audio' => 'verified', 'guided_reset' => 'verified',
+    ];
+    $data = $types->map(function ($t) use ($identitySubcategory) {
+        $arr = $t->toArray();
+        if ($t->category === 'subconscious' && isset($identitySubcategory[$t->type_key])) {
+            $arr['subcategory'] = $identitySubcategory[$t->type_key];
+        }
+        return $arr;
+    });
+
+    return response()->json(['success' => true, 'data' => $data]);
 });
 
 Route::post('/activity-types', function (Request $request) {
@@ -1509,6 +1523,282 @@ Route::group(['middleware' => []], function () {
     });
 
     // ============== RESULTS TRACKER (Phase 2) ==============
+    
+    // ----- CLIENTS (Results-based) -----
+    // Simple wrapper endpoints so the app can ask:
+    // 1) "Does this user have any clients yet?"
+    // 2) "Create the first client" (stored as a hot_lead result)
+    Route::get('/clients/status', function (Request $request) {
+        $user = getAuthUser($request);
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $count = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->whereNotNull('client_name')
+            ->count();
+
+        return response()->json([
+            'success' => true,
+            'has_clients' => $count > 0,
+            'clients_count' => $count,
+        ]);
+    });
+
+    Route::post('/clients', function (Request $request) {
+        $user = getAuthUser($request);
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $data = $request->validate([
+            'client_name' => ['required', 'string', 'max:255'],
+            'property_name' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'source' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'value' => ['sometimes', 'numeric', 'min:0'],
+            'notes' => ['sometimes', 'nullable', 'string'],
+            'status' => ['sometimes', 'string', 'in:active,converted,lost'],
+        ]);
+
+        $result = \App\Models\Result::create([
+            'user_id' => $user->id,
+            'date' => now()->toDateString(),
+            'type' => 'hot_lead',
+            'client_name' => $data['client_name'],
+            'property_name' => $data['property_name'] ?? null,
+            'source' => $data['source'] ?? null,
+            'value' => $data['value'] ?? 0,
+            'status' => $data['status'] ?? 'active',
+            'notes' => $data['notes'] ?? null,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Client created',
+            'data' => $result,
+        ], 201);
+    });
+
+    // Per-client revenue actions (Cold Call Block, Follow-up Block, etc.)
+    Route::get('/clients/{id}/actions', function (Request $request, $id) {
+        $user = getAuthUser($request);
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $client = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->findOrFail($id);
+
+        $date = $request->get('date', now()->toDateString());
+        if (!is_string($date) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+            $date = now()->toDateString();
+        }
+
+        $meta = [];
+        if ($client->notes) {
+            try {
+                $decoded = json_decode($client->notes, true);
+                if (is_array($decoded)) {
+                    $meta = $decoded;
+                }
+            } catch (\Throwable $e) {
+            }
+        }
+
+        $dailyActions = $meta['daily_actions'] ?? [];
+        $storedActions = is_array($dailyActions) ? ($dailyActions[$date] ?? []) : [];
+
+        // Backward compatibility: old structure stored in meta['actions']
+        if (empty($storedActions) && isset($meta['actions']) && is_array($meta['actions']) && $date === now()->toDateString()) {
+            $storedActions = $meta['actions'];
+        }
+
+        $config = [
+            ['key' => 'cold_call_block', 'label' => 'Cold Calling Block'],
+            ['key' => 'follow_up_block', 'label' => 'Follow-up Block'],
+            ['key' => 'client_meeting', 'label' => 'Client Meeting'],
+            ['key' => 'site_visit', 'label' => 'Site Visit'],
+            ['key' => 'content_creation', 'label' => 'Content Creation'],
+            ['key' => 'content_posting', 'label' => 'Content Posting'],
+            ['key' => 'prospecting_session', 'label' => 'Prospecting Session'],
+            ['key' => 'deal_negotiation', 'label' => 'Deal Negotiation'],
+            ['key' => 'crm_update', 'label' => 'CRM Update'],
+            ['key' => 'referral_ask', 'label' => 'Referral Ask'],
+            ['key' => 'deal_closed', 'label' => 'Deal Closed'],
+            ['key' => 'network_event', 'label' => 'Network Event'],
+            ['key' => 'proposal_sent', 'label' => 'Proposal Sent'],
+        ];
+
+        $actions = array_map(function ($item) use ($storedActions) {
+            $key = $item['key'];
+            $status = $storedActions[$key] ?? null;
+            return [
+                'key' => $key,
+                'label' => $item['label'],
+                'status' => $status, // 'yes' | 'no' | null
+            ];
+        }, $config);
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'client' => $client,
+                'date' => $date,
+                'actions' => $actions,
+            ],
+        ]);
+    });
+
+    Route::post('/clients/{id}/actions', function (Request $request, $id) {
+        $user = getAuthUser($request);
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $data = $request->validate([
+            'action_key' => ['required', 'string', 'max:255'],
+            'status' => ['required', 'string', 'in:yes,no'],
+            'date' => ['sometimes', 'date'],
+        ]);
+
+        $client = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->findOrFail($id);
+
+        $date = $data['date'] ?? now()->toDateString();
+
+        $meta = [];
+        if ($client->notes) {
+            try {
+                $decoded = json_decode($client->notes, true);
+                if (is_array($decoded)) {
+                    $meta = $decoded;
+                }
+            } catch (\Throwable $e) {
+            }
+        }
+
+        $meta['daily_actions'] = $meta['daily_actions'] ?? [];
+        if (!is_array($meta['daily_actions'])) {
+            $meta['daily_actions'] = [];
+        }
+        $meta['daily_actions'][$date] = $meta['daily_actions'][$date] ?? [];
+        if (!is_array($meta['daily_actions'][$date])) {
+            $meta['daily_actions'][$date] = [];
+        }
+        $meta['daily_actions'][$date][$data['action_key']] = $data['status'];
+
+        $client->notes = json_encode($meta);
+        $client->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Action updated',
+        ]);
+    });
+
+    // ─── Save detailed action log for a client (cold call, site visit, negotiation, referral, deal closed) ───
+    Route::post('/clients/{id}/action-log', function (Request $request, $id) {
+        $user = getAuthUser($request);
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $data = $request->validate([
+            'action_type' => ['required', 'string', 'in:cold_call,site_visit,deal_negotiation,deal_closed,referral_ask'],
+            'date'        => ['sometimes', 'date'],
+            'payload'     => ['required', 'array'],
+        ]);
+
+        $client = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->findOrFail($id);
+
+        $date = $data['date'] ?? now()->toDateString();
+        $type = $data['action_type'];
+        $payload = $data['payload'];
+
+        $meta = [];
+        if ($client->notes) {
+            try {
+                $decoded = json_decode($client->notes, true);
+                if (is_array($decoded)) $meta = $decoded;
+            } catch (\Throwable $e) {}
+        }
+
+        // Store under action_logs -> date -> type (array of entries for that day)
+        $meta['action_logs'] = $meta['action_logs'] ?? [];
+        $meta['action_logs'][$date] = $meta['action_logs'][$date] ?? [];
+        $meta['action_logs'][$date][$type] = $meta['action_logs'][$date][$type] ?? [];
+        $meta['action_logs'][$date][$type][] = array_merge($payload, [
+            'logged_at' => now()->toIso8601String(),
+        ]);
+
+        // If deal_closed, also create a result record for the performance pipeline
+        if ($type === 'deal_closed') {
+            $dealValue = floatval($payload['deal_amount'] ?? 0);
+            $commission = floatval($payload['commission'] ?? 0);
+
+            if ($dealValue > 0) {
+                \App\Models\Result::create([
+                    'user_id'       => $user->id,
+                    'type'          => 'deal_closed',
+                    'client_name'   => $client->client_name,
+                    'property_name' => $payload['deal_type'] ?? null,
+                    'value'         => $dealValue,
+                    'notes'         => json_encode([
+                        'deal_type'        => $payload['deal_type'] ?? null,
+                        'commission'       => $commission,
+                        'parent_client_id' => $client->id,
+                    ]),
+                    'date' => $date,
+                ]);
+            }
+        }
+
+        $client->notes = json_encode($meta);
+        $client->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => ucfirst(str_replace('_', ' ', $type)) . ' logged successfully',
+        ]);
+    });
+
+    // ─── Get action logs for a client on a specific date ───
+    Route::get('/clients/{id}/action-logs', function (Request $request, $id) {
+        $user = getAuthUser($request);
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $client = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->findOrFail($id);
+
+        $date = $request->query('date', now()->toDateString());
+
+        $meta = [];
+        if ($client->notes) {
+            try {
+                $decoded = json_decode($client->notes, true);
+                if (is_array($decoded)) $meta = $decoded;
+            } catch (\Throwable $e) {}
+        }
+
+        $logs = ($meta['action_logs'] ?? [])[$date] ?? [];
+
+        return response()->json([
+            'success' => true,
+            'data'    => [
+                'client_id' => $id,
+                'date'      => $date,
+                'logs'      => $logs,
+            ],
+        ]);
+    });
 
     // Log a result (hot lead, deal closed, commission)
     Route::post('/results', function (Request $request) {
@@ -1605,6 +1895,109 @@ Route::group(['middleware' => []], function () {
             'success' => true,
             'data' => $results,
             'summary' => $summary,
+        ]);
+    });
+
+    // ─── Revenue Tracker key metrics (Week / Month / Quarter) ───
+    Route::get('/revenue/metrics', function (Request $request) {
+        $user = getAuthUser($request);
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $period = $request->query('period', 'month'); // week | month | quarter
+        $now = now();
+
+        switch ($period) {
+            case 'week':
+                $from = $now->copy()->startOfWeek()->toDateString();
+                break;
+            case 'quarter':
+                $from = $now->copy()->firstOfQuarter()->toDateString();
+                break;
+            default: // month
+                $from = $now->copy()->startOfMonth()->toDateString();
+                break;
+        }
+        $to = $now->toDateString();
+
+        $hotLeads = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->whereBetween('date', [$from, $to])
+            ->count();
+
+        $dealsClosed = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'deal_closed')
+            ->whereBetween('date', [$from, $to])
+            ->count();
+
+        $totalCommission = (float) \App\Models\Result::where('user_id', $user->id)
+            ->whereIn('type', ['commission', 'deal_closed'])
+            ->whereBetween('date', [$from, $to])
+            ->sum('value');
+
+        // Top source: find the most common source among hot_leads
+        $topSourceRow = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->whereBetween('date', [$from, $to])
+            ->whereNotNull('source')
+            ->selectRaw('source, COUNT(*) as cnt')
+            ->groupBy('source')
+            ->orderByDesc('cnt')
+            ->first();
+
+        $topSource = $topSourceRow ? $topSourceRow->source : null;
+
+        // Previous period for comparison
+        switch ($period) {
+            case 'week':
+                $prevFrom = $now->copy()->subWeek()->startOfWeek()->toDateString();
+                $prevTo = $now->copy()->subWeek()->endOfWeek()->toDateString();
+                break;
+            case 'quarter':
+                $prevFrom = $now->copy()->subQuarter()->firstOfQuarter()->toDateString();
+                $prevTo = $now->copy()->subQuarter()->lastOfQuarter()->toDateString();
+                break;
+            default:
+                $prevFrom = $now->copy()->subMonth()->startOfMonth()->toDateString();
+                $prevTo = $now->copy()->subMonth()->endOfMonth()->toDateString();
+                break;
+        }
+
+        $prevLeads = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->whereBetween('date', [$prevFrom, $prevTo])
+            ->count();
+
+        $prevDeals = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'deal_closed')
+            ->whereBetween('date', [$prevFrom, $prevTo])
+            ->count();
+
+        $leadsChange = $prevLeads > 0 ? round((($hotLeads - $prevLeads) / $prevLeads) * 100) : 0;
+        $dealsChange = $prevDeals > 0 ? round((($dealsClosed - $prevDeals) / $prevDeals) * 100) : 0;
+
+        // Recent activity (last 10 results of any type in this period)
+        $recentActivity = \App\Models\Result::where('user_id', $user->id)
+            ->whereBetween('date', [$from, $to])
+            ->orderByDesc('created_at')
+            ->limit(10)
+            ->get(['id', 'type', 'client_name', 'value', 'source', 'date', 'created_at']);
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'period' => $period,
+                'from' => $from,
+                'to' => $to,
+                'hot_leads' => $hotLeads,
+                'deals_closed' => $dealsClosed,
+                'total_commission' => $totalCommission,
+                'top_source' => $topSource,
+                'leads_change' => $leadsChange,
+                'deals_change' => $dealsChange,
+                'recent_activity' => $recentActivity,
+            ],
         ]);
     });
 
