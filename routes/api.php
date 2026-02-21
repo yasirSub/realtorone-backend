@@ -1641,6 +1641,52 @@ Route::group(['middleware' => []], function () {
             ];
         }, $config);
 
+        // Backfill: ensure revenue_action records exist for any action marked "yes"
+        // (handles actions set before the revenue_action enum was added)
+        $actionLabels = [
+            'cold_call_block' => 'Cold Calling Block',
+            'follow_up_block' => 'Follow-up Block',
+            'client_meeting' => 'Client Meeting',
+            'site_visit' => 'Site Visit',
+            'content_creation' => 'Content Creation',
+            'content_posting' => 'Content Posting',
+            'prospecting_session' => 'Prospecting Session',
+            'deal_negotiation' => 'Deal Negotiation',
+            'crm_update' => 'CRM Update',
+            'referral_ask' => 'Referral Ask',
+            'deal_closed' => 'Deal Closed',
+            'network_event' => 'Network Event',
+            'proposal_sent' => 'Proposal Sent',
+        ];
+        $driver = DB::connection()->getDriverName();
+        foreach ($storedActions as $actionKey => $status) {
+            if ($status !== 'yes' || !is_string($actionKey)) continue;
+            $actionLabel = $actionLabels[$actionKey] ?? ucfirst(str_replace('_', ' ', $actionKey));
+            $exists = \App\Models\Result::where('user_id', $user->id)
+                ->where('type', 'revenue_action')
+                ->where('client_name', $client->client_name)
+                ->where('date', $date);
+            $exists = $driver === 'mysql'
+                ? $exists->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(notes, '$.action_key')) = ?", [$actionKey])->exists()
+                : $exists->whereRaw("json_extract(notes, '$.action_key') = ?", [$actionKey])->exists();
+            if (!$exists) {
+                try {
+                    \App\Models\Result::create([
+                        'user_id' => $user->id,
+                        'type' => 'revenue_action',
+                        'client_name' => $client->client_name,
+                        'date' => $date,
+                        'value' => 0,
+                        'notes' => json_encode([
+                            'action_key' => $actionKey,
+                            'action_label' => $actionLabel,
+                            'parent_client_id' => (int) $id,
+                        ]),
+                    ]);
+                } catch (\Throwable $e) {}
+            }
+        }
+
         return response()->json([
             'success' => true,
             'data' => [
@@ -1688,10 +1734,70 @@ Route::group(['middleware' => []], function () {
         if (!is_array($meta['daily_actions'][$date])) {
             $meta['daily_actions'][$date] = [];
         }
+        $previousStatus = $meta['daily_actions'][$date][$data['action_key']] ?? null;
         $meta['daily_actions'][$date][$data['action_key']] = $data['status'];
 
         $client->notes = json_encode($meta);
         $client->save();
+
+        \Log::info('[DAILY_LOG_DEBUG] POST /clients/' . $id . '/actions', [
+            'action_key' => $data['action_key'],
+            'status' => $data['status'],
+            'date' => $date,
+            'previousStatus' => $previousStatus,
+        ]);
+
+        // When status is "yes", create a Result so it appears in Activity for this client.
+        // Only create if one doesn't exist yet (handles backfill for actions set to Yes before migration).
+        if ($data['status'] === 'yes') {
+            $actionLabels = [
+                'cold_call_block' => 'Cold Calling Block',
+                'follow_up_block' => 'Follow-up Block',
+                'client_meeting' => 'Client Meeting',
+                'site_visit' => 'Site Visit',
+                'content_creation' => 'Content Creation',
+                'content_posting' => 'Content Posting',
+                'prospecting_session' => 'Prospecting Session',
+                'deal_negotiation' => 'Deal Negotiation',
+                'crm_update' => 'CRM Update',
+                'referral_ask' => 'Referral Ask',
+                'deal_closed' => 'Deal Closed',
+                'network_event' => 'Network Event',
+                'proposal_sent' => 'Proposal Sent',
+            ];
+            $actionLabel = $actionLabels[$data['action_key']] ?? ucfirst(str_replace('_', ' ', $data['action_key']));
+            $notesPayload = json_encode([
+                'action_key' => $data['action_key'],
+                'action_label' => $actionLabel,
+                'parent_client_id' => (int) $id,
+            ]);
+
+            // Avoid duplicates: check if we already have this revenue_action for client+date+action_key
+            $driver = DB::connection()->getDriverName();
+            $base = \App\Models\Result::where('user_id', $user->id)
+                ->where('type', 'revenue_action')
+                ->where('client_name', $client->client_name)
+                ->where('date', $date);
+            $exists = $driver === 'mysql'
+                ? $base->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(notes, '$.action_key')) = ?", [$data['action_key']])->exists()
+                : $base->whereRaw("json_extract(notes, '$.action_key') = ?", [$data['action_key']])->exists();
+
+            if (!$exists) {
+                try {
+                    $result = \App\Models\Result::create([
+                        'user_id' => $user->id,
+                        'type' => 'revenue_action',
+                        'client_name' => $client->client_name,
+                        'date' => $date,
+                        'value' => 0,
+                        'notes' => $notesPayload,
+                    ]);
+                    \Log::info('[DAILY_LOG_DEBUG] Created revenue_action Result', ['id' => $result->id, 'client_name' => $client->client_name, 'action_label' => $actionLabel]);
+                } catch (\Throwable $e) {
+                    \Log::error('[DAILY_LOG_DEBUG] Failed to create Result', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+                }
+            }
+        }
 
         return response()->json([
             'success' => true,
@@ -1741,7 +1847,7 @@ Route::group(['middleware' => []], function () {
             $dealValue = floatval($payload['deal_amount'] ?? 0);
             $commission = floatval($payload['commission'] ?? 0);
 
-            if ($dealValue > 0) {
+            if ($dealValue > 0 || $commission > 0) {
                 \App\Models\Result::create([
                     'user_id'       => $user->id,
                     'type'          => 'deal_closed',
@@ -1764,6 +1870,41 @@ Route::group(['middleware' => []], function () {
         return response()->json([
             'success' => true,
             'message' => ucfirst(str_replace('_', ' ', $type)) . ' logged successfully',
+        ]);
+    });
+
+    // ─── Get activities for a client (for client-specific activity list) ───
+    Route::get('/clients/{id}/activities', function (Request $request, $id) {
+        $user = getAuthUser($request);
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $client = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->findOrFail($id);
+
+        $clientName = $client->client_name;
+        $clientIdStr = (string) $id;
+        $driver = DB::connection()->getDriverName();
+
+        // Include: (a) by client_name match, (b) revenue_actions linked via parent_client_id in notes
+        $activities = \App\Models\Result::where('user_id', $user->id)
+            ->where(function ($q) use ($clientName, $clientIdStr, $driver) {
+                $q->where('client_name', $clientName);
+                if ($driver === 'mysql') {
+                    $q->orWhereRaw("type = 'revenue_action' AND JSON_UNQUOTE(JSON_EXTRACT(notes, '$.parent_client_id')) = ?", [$clientIdStr]);
+                } else {
+                    $q->orWhereRaw("type = 'revenue_action' AND json_extract(notes, '$.parent_client_id') = ?", [$clientIdStr]);
+                }
+            })
+            ->orderByDesc('created_at')
+            ->limit(50)
+            ->get(['id', 'type', 'client_name', 'value', 'source', 'date', 'created_at', 'notes']);
+
+        return response()->json([
+            'success' => true,
+            'data' => $activities,
         ]);
     });
 
@@ -1868,6 +2009,9 @@ Route::group(['middleware' => []], function () {
         if ($request->has('type')) {
             $query->where('type', $request->type);
         }
+        if ($request->has('source') && $request->query('type') === 'hot_lead') {
+            $query->where('source', $request->source);
+        }
         if ($request->has('from')) {
             $query->where('date', '>=', $request->from);
         }
@@ -1921,26 +2065,34 @@ Route::group(['middleware' => []], function () {
         }
         $to = $now->toDateString();
 
+        // Key metrics: all-time totals (total clients, total deals, total commission, top source across all clients)
         $hotLeads = \App\Models\Result::where('user_id', $user->id)
             ->where('type', 'hot_lead')
-            ->whereBetween('date', [$from, $to])
+            ->whereNotNull('client_name')
             ->count();
 
         $dealsClosed = \App\Models\Result::where('user_id', $user->id)
             ->where('type', 'deal_closed')
-            ->whereBetween('date', [$from, $to])
             ->count();
 
-        $totalCommission = (float) \App\Models\Result::where('user_id', $user->id)
-            ->whereIn('type', ['commission', 'deal_closed'])
-            ->whereBetween('date', [$from, $to])
+        // Net commission: from type=commission (value) + deal_closed (notes.commission)
+        $commissionFromDeals = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'deal_closed')
+            ->get()
+            ->sum(function ($r) {
+                $notes = is_string($r->notes) ? json_decode($r->notes, true) : $r->notes;
+                return is_array($notes) ? (float) ($notes['commission'] ?? 0) : 0;
+            });
+        $commissionFromType = (float) \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'commission')
             ->sum('value');
+        $totalCommission = $commissionFromDeals + $commissionFromType;
 
-        // Top source: find the most common source among hot_leads
+        // Top source: most common source among all hot_leads (clients)
         $topSourceRow = \App\Models\Result::where('user_id', $user->id)
             ->where('type', 'hot_lead')
-            ->whereBetween('date', [$from, $to])
             ->whereNotNull('source')
+            ->where('source', '!=', '')
             ->selectRaw('source, COUNT(*) as cnt')
             ->groupBy('source')
             ->orderByDesc('cnt')
@@ -1964,25 +2116,40 @@ Route::group(['middleware' => []], function () {
                 break;
         }
 
+        // Period counts for change indicator (vs previous period)
+        $periodLeads = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->whereBetween('date', [$from, $to])
+            ->count();
+        $periodDeals = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'deal_closed')
+            ->whereBetween('date', [$from, $to])
+            ->count();
         $prevLeads = \App\Models\Result::where('user_id', $user->id)
             ->where('type', 'hot_lead')
             ->whereBetween('date', [$prevFrom, $prevTo])
             ->count();
-
         $prevDeals = \App\Models\Result::where('user_id', $user->id)
             ->where('type', 'deal_closed')
             ->whereBetween('date', [$prevFrom, $prevTo])
             ->count();
 
-        $leadsChange = $prevLeads > 0 ? round((($hotLeads - $prevLeads) / $prevLeads) * 100) : 0;
-        $dealsChange = $prevDeals > 0 ? round((($dealsClosed - $prevDeals) / $prevDeals) * 100) : 0;
+        $leadsChange = $prevLeads > 0 ? round((($periodLeads - $prevLeads) / $prevLeads) * 100) : ($periodLeads > 0 ? 100 : 0);
+        $dealsChange = $prevDeals > 0 ? round((($periodDeals - $prevDeals) / $prevDeals) * 100) : ($periodDeals > 0 ? 100 : 0);
 
-        // Recent activity (last 10 results of any type in this period)
+        // Recent activity: last 10 results by created_at (ignores period date range so newly logged actions always show)
         $recentActivity = \App\Models\Result::where('user_id', $user->id)
-            ->whereBetween('date', [$from, $to])
             ->orderByDesc('created_at')
             ->limit(10)
-            ->get(['id', 'type', 'client_name', 'value', 'source', 'date', 'created_at']);
+            ->get(['id', 'type', 'client_name', 'value', 'source', 'date', 'created_at', 'notes']);
+
+        \Log::info('[REVENUE_DEBUG] GET /revenue/metrics', [
+            'period' => $period,
+            'from' => $from,
+            'to' => $to,
+            'recent_activity_count' => $recentActivity->count(),
+            'types' => $recentActivity->pluck('type')->toArray(),
+        ]);
 
         return response()->json([
             'success' => true,
