@@ -170,6 +170,76 @@ Route::delete('/admin/users/{id}', function ($id) {
     return response()->json(['status' => 'ok']);
 });
 
+// Admin: Revenue metrics for a specific user (Key Metrics - Hot Leads, Deals Closed, Commission, Top Source)
+Route::get('/admin/users/{id}/revenue-metrics', function ($id) {
+    $user = \App\Models\User::findOrFail($id);
+
+    $hotLeads = \App\Models\Result::where('user_id', $user->id)
+        ->where('type', 'hot_lead')
+        ->whereNotNull('client_name')
+        ->count();
+
+    $dealsClosed = \App\Models\Result::where('user_id', $user->id)
+        ->where('type', 'deal_closed')
+        ->count();
+
+    $commissionFromDeals = \App\Models\Result::where('user_id', $user->id)
+        ->where('type', 'deal_closed')
+        ->get()
+        ->sum(function ($r) {
+            $notes = is_string($r->notes) ? json_decode($r->notes, true) : $r->notes;
+            return is_array($notes) ? (float) ($notes['commission'] ?? 0) : 0;
+        });
+    $commissionFromType = (float) \App\Models\Result::where('user_id', $user->id)
+        ->where('type', 'commission')
+        ->sum('value');
+    $totalCommission = $commissionFromDeals + $commissionFromType;
+
+    $topSourceRow = \App\Models\Result::where('user_id', $user->id)
+        ->where('type', 'hot_lead')
+        ->whereNotNull('source')
+        ->where('source', '!=', '')
+        ->selectRaw('source, COUNT(*) as cnt')
+        ->groupBy('source')
+        ->orderByDesc('cnt')
+        ->first();
+    $topSource = $topSourceRow ? $topSourceRow->source : null;
+
+    $recentActivity = \App\Models\Result::where('user_id', $user->id)
+        ->orderByDesc('created_at')
+        ->limit(10)
+        ->get(['id', 'type', 'client_name', 'value', 'source', 'date', 'created_at', 'notes']);
+
+    return response()->json([
+        'success' => true,
+        'data' => [
+            'hot_leads' => $hotLeads,
+            'deals_closed' => $dealsClosed,
+            'total_commission' => $totalCommission,
+            'top_source' => $topSource,
+            'recent_activity' => $recentActivity,
+        ],
+    ]);
+});
+
+// Admin: Results list for a user (Hot Leads, Deals Closed, filtered by source)
+Route::get('/admin/users/{id}/results', function (Request $request, $id) {
+    $user = \App\Models\User::findOrFail($id);
+
+    $query = \App\Models\Result::where('user_id', $user->id);
+
+    if ($request->has('type')) {
+        $query->where('type', $request->type);
+    }
+    if ($request->has('source') && $request->query('type') === 'hot_lead') {
+        $query->where('source', $request->source);
+    }
+
+    $results = $query->orderByDesc('date')->orderByDesc('created_at')->get();
+
+    return response()->json(['success' => true, 'data' => $results]);
+});
+
 // Subscription Packages
 Route::get('/admin/packages', function () {
     return response()->json(['success' => true, 'data' => \App\Models\SubscriptionPackage::orderBy('tier_level', 'asc')->get()]);
@@ -1580,6 +1650,85 @@ Route::group(['middleware' => []], function () {
         ], 201);
     });
 
+    // Per-client daily execution progress (what % of today's actions are completed)
+    Route::get('/clients/{id}/daily-progress', function (Request $request, $id) {
+        $user = getAuthUser($request);
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $client = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->findOrFail($id);
+
+        $date = $request->get('date', now()->toDateString());
+        if (!is_string($date) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+            $date = now()->toDateString();
+        }
+
+        $meta = [];
+        if ($client->notes) {
+            try {
+                $decoded = json_decode($client->notes, true);
+                if (is_array($decoded)) {
+                    $meta = $decoded;
+                }
+            } catch (\Throwable $e) {
+            }
+        }
+
+        // Same config keys as /clients/{id}/actions
+        $config = [
+            'cold_call_block',
+            'follow_up_block',
+            'client_meeting',
+            'site_visit',
+            'content_creation',
+            'content_posting',
+            'prospecting_session',
+            'deal_negotiation',
+            'crm_update',
+            'referral_ask',
+            'deal_closed',
+            'network_event',
+            'proposal_sent',
+        ];
+
+        $total = count($config);
+
+        $dailyActions = $meta['daily_actions'] ?? [];
+        $storedActions = is_array($dailyActions) ? ($dailyActions[$date] ?? []) : [];
+
+        // Backward compatibility: old structure stored in meta['actions'] for "today"
+        if (empty($storedActions) && isset($meta['actions']) && is_array($meta['actions']) && $date === now()->toDateString()) {
+            $storedActions = $meta['actions'];
+        }
+
+        $completed = 0;
+        foreach ($config as $key) {
+            if (($storedActions[$key] ?? null) === 'yes') {
+                $completed++;
+            }
+        }
+
+        $percentage = $total > 0 ? (int) round(($completed / $total) * 100) : 0;
+
+        $status = $percentage === 0
+            ? 'none'
+            : ($percentage < 50 ? 'low' : ($percentage < 80 ? 'medium' : 'high'));
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'date' => $date,
+                'total_actions' => $total,
+                'completed_actions' => $completed,
+                'percentage' => $percentage,
+                'status' => $status,
+            ],
+        ]);
+    });
+
     // Per-client revenue actions (Cold Call Block, Follow-up Block, etc.)
     Route::get('/clients/{id}/actions', function (Request $request, $id) {
         $user = getAuthUser($request);
@@ -2020,6 +2169,72 @@ Route::group(['middleware' => []], function () {
         }
 
         $results = $query->orderByDesc('date')->orderByDesc('created_at')->get();
+
+        // Attach today's execution progress for hot_leads (used by Deal Room client list)
+        if ($request->query('type') === 'hot_lead') {
+            $today = $request->query('date', now()->toDateString());
+
+            $configKeys = [
+                'cold_call_block',
+                'follow_up_block',
+                'client_meeting',
+                'site_visit',
+                'content_creation',
+                'content_posting',
+                'prospecting_session',
+                'deal_negotiation',
+                'crm_update',
+                'referral_ask',
+                'deal_closed',
+                'network_event',
+                'proposal_sent',
+            ];
+            $totalActions = count($configKeys);
+
+            $results = $results->map(function ($result) use ($today, $configKeys, $totalActions) {
+                $meta = [];
+                if ($result->notes) {
+                    try {
+                        $decoded = json_decode($result->notes, true);
+                        if (is_array($decoded)) {
+                            $meta = $decoded;
+                        }
+                    } catch (\Throwable $e) {
+                    }
+                }
+
+                $dailyActions = $meta['daily_actions'] ?? [];
+                $storedActions = is_array($dailyActions) ? ($dailyActions[$today] ?? []) : [];
+
+                // Backward compatibility: old structure stored in meta['actions'] for "today"
+                if (empty($storedActions) && isset($meta['actions']) && is_array($meta['actions']) && $today === now()->toDateString()) {
+                    $storedActions = $meta['actions'];
+                }
+
+                $completed = 0;
+                foreach ($configKeys as $key) {
+                    if (($storedActions[$key] ?? null) === 'yes') {
+                        $completed++;
+                    }
+                }
+
+                $percentage = $totalActions > 0 ? (int) round(($completed / $totalActions) * 100) : 0;
+
+                $status = $percentage === 0
+                    ? 'none'
+                    : ($percentage < 50 ? 'low' : ($percentage < 80 ? 'medium' : 'high'));
+
+                $result->today_progress = [
+                    'date' => $today,
+                    'total_actions' => $totalActions,
+                    'completed_actions' => $completed,
+                    'percentage' => $percentage,
+                    'status' => $status,
+                ];
+
+                return $result;
+            });
+        }
 
         // Summary
         $monthStart = now()->startOfMonth()->toDateString();
