@@ -18,10 +18,10 @@ class DatabaseSeeder extends Seeder
     {
         // Admin User
         User::updateOrCreate(
-            ['email' => 'admin@realtorone.com'],
+            ['email' => 'admin@yas1r.local'],
             [
                 'name' => 'Root Admin',
-                'password' => Hash::make('password123'),
+                'password' => Hash::make('ChangeThisPassword123!@#'),
                 'membership_tier' => 'Titan'
             ]
         );
