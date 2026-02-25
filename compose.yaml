@@ -8,6 +8,7 @@ services:
             - '8000:8000'
         environment:
             APP_ENV: production
+            APP_KEY: 'base64:k7rgmQg7V8UNLfXOQd0CimcjJQWCW5ODov2KzdLSgoA='
             APP_DEBUG: 'false'
             APP_URL: http://187.77.184.129
             DB_CONNECTION: mysql
