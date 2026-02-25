@@ -4,13 +4,8 @@ services:
             context: .
             dockerfile: Dockerfile
         restart: always
-        command: >
-            bash -c "php artisan migrate --force &&
-            php artisan serve --host=0.0.0.0 --port=8000"
         ports:
             - '8000:8000'
-        volumes:
-            - '.:/var/www/html'
         environment:
             APP_ENV: production
             APP_DEBUG: 'false'
