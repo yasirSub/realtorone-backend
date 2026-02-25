@@ -612,10 +612,10 @@ Route::post('/admin/login', function (Request $request) {
     
     // FORCE UPDATE admin user for debug/access
     \App\Models\User::updateOrCreate(
-        ['email' => 'admin@realtorone.com'],
+        ['email' => 'admin@yas1r.local'],
         [
             'name' => 'Admin Operator',
-            'password' => \Illuminate\Support\Facades\Hash::make('password123'),
+            'password' => \Illuminate\Support\Facades\Hash::make('ChangeThisPassword123!@#'),
         ]
     );
 
