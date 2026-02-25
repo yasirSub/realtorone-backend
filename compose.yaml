@@ -9,7 +9,7 @@ services:
         environment:
             APP_ENV: production
             APP_DEBUG: 'false'
-            APP_URL: http://187.77.104.129
+            APP_URL: http://187.77.184.129
             DB_CONNECTION: mysql
             DB_HOST: mysql
             DB_PORT: 3306
