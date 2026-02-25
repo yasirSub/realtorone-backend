@@ -446,12 +446,12 @@ class DatabaseSeeder extends Seeder
                     'user_id' => $user->id,
                     'week_start' => $weekStart,
                     'week_end' => $weekEnd,
-                    'avg_momentum_score' => rand(40, 95) + (rand(0, 99) / 100),
+                    'avg_score' => rand(40, 95) + (rand(0, 99) / 100),
                     'total_deals' => rand(0, 5),
                     'total_leads' => rand(2, 20),
                     'total_commission' => rand(0, 100000),
                     'days_active' => rand(3, 7),
-                    'consistency_percentage' => rand(50, 100),
+                    'consistency_percent' => rand(50, 100),
                 ]);
             }
         }
