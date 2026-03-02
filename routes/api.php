@@ -309,6 +309,69 @@ Route::delete('/admin/coupons/{id}', function ($id) {
 
 // Courses Management
 Route::resource('admin/courses', \App\Http\Controllers\CourseController::class);
+Route::post('admin/courses/{id}/modules', [\App\Http\Controllers\CourseController::class, 'storeModule']);
+Route::put('admin/modules/{id}', [\App\Http\Controllers\CourseController::class, 'updateModule']);
+Route::delete('admin/modules/{id}', [\App\Http\Controllers\CourseController::class, 'destroyModule']);
+
+Route::post('admin/modules/{id}/lessons', [\App\Http\Controllers\CourseController::class, 'storeLesson']);
+Route::put('admin/lessons/{id}', [\App\Http\Controllers\CourseController::class, 'updateLesson']);
+Route::delete('admin/lessons/{id}', [\App\Http\Controllers\CourseController::class, 'destroyLesson']);
+
+Route::post('admin/lessons/{id}/materials', [\App\Http\Controllers\CourseController::class, 'storeMaterial']);
+Route::put('admin/materials/{id}', [\App\Http\Controllers\CourseController::class, 'updateMaterial']);
+Route::delete('admin/materials/{id}', [\App\Http\Controllers\CourseController::class, 'destroyMaterial']);
+
+Route::post('admin/courses/upload', [\App\Http\Controllers\CourseController::class, 'uploadFile']);
+
+// Video streaming with range request support (required for HTML5 video playback)
+Route::get('stream/{filename}', function (Request $request, $filename) {
+    $path = storage_path('app/public/course-assets/' . $filename);
+
+    if (!file_exists($path)) {
+        return response()->json(['error' => 'File not found'], 404);
+    }
+
+    $mimeType = mime_content_type($path);
+    $fileSize = filesize($path);
+    $start = 0;
+    $end = $fileSize - 1;
+    $statusCode = 200;
+
+    $headers = [
+        'Content-Type'              => $mimeType,
+        'Accept-Ranges'             => 'bytes',
+        'Access-Control-Allow-Origin' => '*',
+        'Cache-Control'             => 'public, max-age=86400',
+        'Content-Disposition'       => 'inline',
+    ];
+
+    if ($request->hasHeader('Range')) {
+        $range = $request->header('Range');
+        preg_match('/bytes=(\d*)-(\d*)/', $range, $matches);
+        $start = $matches[1] !== '' ? (int)$matches[1] : 0;
+        $end   = $matches[2] !== '' ? (int)$matches[2] : $fileSize - 1;
+        $end   = min($end, $fileSize - 1);
+        $headers['Content-Range']  = "bytes {$start}-{$end}/{$fileSize}";
+        $statusCode = 206;
+    }
+
+    $length = $end - $start + 1;
+    $headers['Content-Length'] = $length;
+
+    return response()->stream(function () use ($path, $start, $length) {
+        $handle = fopen($path, 'rb');
+        fseek($handle, $start);
+        $remaining = $length;
+        while (!feof($handle) && $remaining > 0) {
+            $chunk = min(1024 * 256, $remaining); // 256KB chunks
+            echo fread($handle, $chunk);
+            $remaining -= $chunk;
+            flush();
+        }
+        fclose($handle);
+    }, $statusCode, $headers);
+});
+
 
 // User-facing Courses List
 Route::get('/courses', function (Request $request) {
@@ -394,6 +457,7 @@ Route::get('/courses', function (Request $request) {
             'id' => $course->id,
             'title' => $course->title,
             'description' => $course->description,
+            'thumbnail_url' => $course->thumbnail_url ? url('storage/' . str_replace('course-assets/', '', $course->thumbnail_url)) : null,
             'url' => $course->url,
             'min_tier' => $course->min_tier,
             'module_number' => $moduleNum,
@@ -411,6 +475,53 @@ Route::get('/courses', function (Request $request) {
         'success' => true, 
         'data' => $modulesArray,
         'user_tier' => $userTierName
+    ]);
+});
+
+// User-facing Course Details (Curriculum)
+Route::get('/courses/{id}', function (Request $request, $id) {
+    $user = getAuthUser($request);
+    if (!$user) return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+
+    $course = \App\Models\Course::with(['modules.lessons.materials'])->findOrFail($id);
+    
+    // Check if user has access to this course
+    $sub = \App\Models\UserSubscription::with('package')
+        ->where('user_id', $user->id)
+        ->where('status', 'active')
+        ->where('expires_at', '>', now())
+        ->orderBy('expires_at', 'desc')
+        ->first();
+
+    $userTierName = $sub ? $sub->package->name : 'Consultant';
+    $tierRanks = ['consultant' => 0, 'rainmaker' => 1, 'titan' => 2];
+    $currentRank = $tierRanks[strtolower($userTierName)] ?? 0;
+    $courseRank = $tierRanks[strtolower($course->min_tier)] ?? 0;
+
+    if ($courseRank > $currentRank) {
+        return response()->json(['success' => false, 'message' => 'Tier upgrade required', 'required_tier' => $course->min_tier], 403);
+    }
+
+    // Attach user progress for materials
+    $materialProgress = DB::table('course_material_progress')
+        ->where('user_id', $user->id)
+        ->get()
+        ->keyBy('material_id');
+
+    $course->modules->each(function ($module) use ($materialProgress) {
+        $module->lessons->each(function ($lesson) use ($materialProgress) {
+            $lesson->materials->each(function ($material) use ($materialProgress) {
+                $progress = $materialProgress->get($material->id);
+                $material->is_completed = $progress ? (bool)$progress->is_completed : false;
+                $material->progress_seconds = $progress ? $progress->progress_seconds : 0;
+                $material->completed_at = $progress ? $progress->completed_at : null;
+            });
+        });
+    });
+
+    return response()->json([
+        'success' => true,
+        'data' => $course
     ]);
 });
 
@@ -438,6 +549,33 @@ Route::post('/courses/{id}/progress', function (Request $request, $id) {
         );
 
     return response()->json(['success' => true, 'message' => 'Progress updated']);
+});
+
+// Update material progress
+Route::post('/courses/materials/{id}/progress', function (Request $request, $id) {
+    $user = getAuthUser($request);
+    if (!$user) return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+
+    $validated = $request->validate([
+        'is_completed' => 'nullable|boolean',
+        'progress_seconds' => 'nullable|integer'
+    ]);
+
+    $data = ['updated_at' => now()];
+    if ($request->has('is_completed')) {
+        $data['is_completed'] = $validated['is_completed'];
+        $data['completed_at'] = $validated['is_completed'] ? now() : null;
+    }
+    if ($request->has('progress_seconds')) {
+        $data['progress_seconds'] = $validated['progress_seconds'];
+    }
+
+    DB::table('course_material_progress')->updateOrInsert(
+        ['user_id' => $user->id, 'material_id' => $id],
+        array_merge($data, ['created_at' => DB::raw('COALESCE(created_at, NOW())')])
+    );
+
+    return response()->json(['success' => true, 'message' => 'Material progress updated']);
 });
 
 // Add this to the protected group

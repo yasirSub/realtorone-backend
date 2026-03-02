@@ -100,6 +100,12 @@ class DatabaseSeeder extends Seeder
             ['tier_level' => 1, 'price_monthly' => 210.00, 'description' => 'Advanced execution tools and deeper analytics.', 'features' => ['Market Analytics', 'Priority Support']]
         );
 
+        // Deduplicate Titan - GOLD if it exists before creating/updating 'Titan'
+        \App\Models\SubscriptionPackage::where('name', 'Titan - GOLD')
+            ->orWhere('name', 'Titan-GOLD')
+            ->orWhere('name', 'Titan GOLD')
+            ->delete();
+
         $titanGold = \App\Models\SubscriptionPackage::updateOrCreate(
             ['name' => 'Titan'],
             ['tier_level' => 2, 'price_monthly' => 420.00, 'description' => 'Maximum performance infrastructure for elite operators. Includes all premium features.', 'features' => ['Pro Mastermind Access', 'Dedicated Account Manager', 'Inner Circle Access', 'Personal Coaching', 'Unlimited Resources']]
@@ -153,33 +159,11 @@ class DatabaseSeeder extends Seeder
             ]
         );
 
-        // Seed Courses - Module Structure
-        // Module 1: Invisible Influence Belief + Identity (All tiers)
-        $module1Courses = [
-            ['title' => 'Identity Declaration', 'description' => 'Define your professional identity and core values.', 'min_tier' => 'Consultant', 'module_number' => 1, 'sequence' => 1, 'url' => 'https://example.com/module1-identity'],
-            ['title' => 'Revenue Activation', 'description' => 'Activate your revenue-generating mindset and beliefs.', 'min_tier' => 'Consultant', 'module_number' => 1, 'sequence' => 2, 'url' => 'https://example.com/module1-revenue'],
-            ['title' => 'Belief System Foundation', 'description' => 'Build the foundation of your success beliefs.', 'min_tier' => 'Consultant', 'module_number' => 1, 'sequence' => 3, 'url' => 'https://example.com/module1-beliefs'],
-        ];
-
-        // Module 2: Million Dirham Beliefs (Rainmaker+)
-        $module2Courses = [
-            ['title' => 'Million Dirham Mindset', 'description' => 'Upgrade to unlock: Develop beliefs that attract high-value opportunities.', 'min_tier' => 'Rainmaker', 'module_number' => 2, 'sequence' => 1, 'url' => 'https://example.com/module2-mindset'],
-            ['title' => 'Wealth Consciousness', 'description' => 'Upgrade to unlock: Shift your consciousness to attract abundance.', 'min_tier' => 'Rainmaker', 'module_number' => 2, 'sequence' => 2, 'url' => 'https://example.com/module2-wealth'],
-            ['title' => 'Elite Operator Identity', 'description' => 'Upgrade to unlock: Embody the identity of a top-performing agent.', 'min_tier' => 'Rainmaker', 'module_number' => 2, 'sequence' => 3, 'url' => 'https://example.com/module2-identity'],
-        ];
-
-        // Module 3: Cold Calling System Elite Execution (Titan only)
-        $module3Courses = [
-            ['title' => 'Cold Calling System', 'description' => 'Elite execution: Master the art of high-converting cold calls.', 'min_tier' => 'Titan', 'module_number' => 3, 'sequence' => 1, 'url' => 'https://example.com/module3-coldcalling'],
-            ['title' => 'Objection Handling Mastery', 'description' => 'Elite execution: Turn objections into opportunities.', 'min_tier' => 'Titan', 'module_number' => 3, 'sequence' => 2, 'url' => 'https://example.com/module3-objections'],
-            ['title' => 'Closing Techniques', 'description' => 'Elite execution: Advanced closing strategies for high-value deals.', 'min_tier' => 'Titan', 'module_number' => 3, 'sequence' => 3, 'url' => 'https://example.com/module3-closing'],
-        ];
-
-        $allCourses = array_merge($module1Courses, $module2Courses, $module3Courses);
-
-        foreach ($allCourses as $course) {
-            \App\Models\Course::updateOrCreate(['title' => $course['title']], $course);
-        }
+        // Seed Real Courses via separate seeders
+        $this->call([
+            CourseColdCallingSeeder::class,
+            CourseMillionDirhamSeeder::class,
+        ]);
 
         // Seed Activity Types from Master Document
         $activityTypes = [
