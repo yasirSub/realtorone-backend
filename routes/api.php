@@ -578,6 +578,393 @@ Route::post('/courses/materials/{id}/progress', function (Request $request, $id)
     return response()->json(['success' => true, 'message' => 'Material progress updated']);
 });
 
+// --- Course exam (available after course completion) ---
+Route::get('/courses/{id}/exam', function (Request $request, $id) {
+    $user = getAuthUser($request);
+    if (!$user) return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+
+    $courseId = (int) $id;
+    $progress = DB::table('course_progress')->where('user_id', $user->id)->where('course_id', $courseId)->first();
+    if (!$progress || !$progress->is_completed) {
+        return response()->json(['success' => false, 'message' => 'Complete the course first to take the exam'], 403);
+    }
+
+    $exam = DB::table('course_exams')->where('course_id', $courseId)->where('is_active', true)->first();
+    if (!$exam) {
+        return response()->json(['success' => false, 'message' => 'No exam available for this course'], 404);
+    }
+
+    $recentAttempts = DB::table('course_exam_attempts')
+        ->where('user_id', $user->id)
+        ->where('course_exam_id', $exam->id)
+        ->where('submitted_at', '>=', now()->subDays(30))
+        ->count();
+    if ($recentAttempts >= 2) {
+        return response()->json(['success' => false, 'message' => 'You have reached the maximum of 2 exam attempts within 30 days. Try again later.'], 403);
+    }
+
+    $questions = DB::table('course_exam_questions')
+        ->where('course_exam_id', $exam->id)
+        ->orderBy('sequence')
+        ->orderBy('id')
+        ->get()
+        ->map(function ($q) {
+            return [
+                'id' => $q->id,
+                'question_text' => $q->question_text,
+                'options' => json_decode($q->options, true),
+            ];
+        });
+
+    return response()->json([
+        'success' => true,
+        'data' => [
+            'exam_id' => $exam->id,
+            'title' => $exam->title,
+            'passing_percent' => (int) $exam->passing_percent,
+            'time_minutes' => $exam->time_minutes ? (int) $exam->time_minutes : null,
+            'questions' => $questions,
+        ],
+    ]);
+});
+
+Route::post('/courses/{id}/exam/submit', function (Request $request, $id) {
+    $user = getAuthUser($request);
+    if (!$user) return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+
+    $courseId = (int) $id;
+    $progress = DB::table('course_progress')->where('user_id', $user->id)->where('course_id', $courseId)->first();
+    if (!$progress || !$progress->is_completed) {
+        return response()->json(['success' => false, 'message' => 'Complete the course first'], 403);
+    }
+
+    $exam = DB::table('course_exams')->where('course_id', $courseId)->where('is_active', true)->first();
+    if (!$exam) {
+        return response()->json(['success' => false, 'message' => 'No exam available'], 404);
+    }
+
+    $recentAttempts = DB::table('course_exam_attempts')
+        ->where('user_id', $user->id)
+        ->where('course_exam_id', $exam->id)
+        ->where('submitted_at', '>=', now()->subDays(30))
+        ->count();
+    if ($recentAttempts >= 2) {
+        return response()->json(['success' => false, 'message' => 'You have reached the maximum of 2 exam attempts within 30 days. Try again later.'], 403);
+    }
+
+    $validated = $request->validate([
+        'answers' => 'required|array',
+        'answers.*.question_id' => 'required|integer',
+        'answers.*.selected_index' => 'required|integer|min:0',
+        'started_at' => 'nullable|string',
+    ]);
+
+    $questions = DB::table('course_exam_questions')->where('course_exam_id', $exam->id)->get()->keyBy('id');
+    $correct = 0;
+    foreach ($validated['answers'] as $a) {
+        $q = $questions->get($a['question_id']);
+        if ($q && (int) $q->correct_index === (int) $a['selected_index']) {
+            $correct++;
+        }
+    }
+    $total = $questions->count();
+    $scorePercent = $total > 0 ? (int) round(($correct / $total) * 100) : 0;
+    $passed = $scorePercent >= (int) $exam->passing_percent;
+
+    $submittedAt = now();
+    $startedAt = isset($validated['started_at'])
+        ? \Carbon\Carbon::parse($validated['started_at']) : $submittedAt;
+    DB::table('course_exam_attempts')->insert([
+        'user_id' => $user->id,
+        'course_exam_id' => $exam->id,
+        'score_percent' => $scorePercent,
+        'passed' => $passed,
+        'answers' => json_encode($validated['answers']),
+        'started_at' => $startedAt,
+        'submitted_at' => $submittedAt,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    return response()->json([
+        'success' => true,
+        'data' => [
+            'score_percent' => $scorePercent,
+            'passed' => $passed,
+            'correct' => $correct,
+            'total' => $total,
+        ],
+    ]);
+});
+
+// --- Admin: monitor user course progress and exam results ---
+Route::get('/admin/course-results', function (Request $request) {
+    $user = getAuthUser($request);
+    if (!$user) return response()->json(['success' => false], 401);
+    // Optional: add admin role check here
+
+    $courseProgress = DB::table('course_progress')
+        ->join('users', 'users.id', '=', 'course_progress.user_id')
+        ->join('courses', 'courses.id', '=', 'course_progress.course_id')
+        ->select(
+            'course_progress.id',
+            'course_progress.user_id',
+            'users.name as user_name',
+            'users.email as user_email',
+            'course_progress.course_id',
+            'courses.title as course_title',
+            'course_progress.progress_percent',
+            'course_progress.is_completed',
+            'course_progress.completed_at',
+            'course_progress.last_accessed_at'
+        )
+        ->orderBy('course_progress.updated_at', 'desc')
+        ->get();
+
+    $attempts = DB::table('course_exam_attempts')
+        ->join('users', 'users.id', '=', 'course_exam_attempts.user_id')
+        ->join('course_exams', 'course_exams.id', '=', 'course_exam_attempts.course_exam_id')
+        ->join('courses', 'courses.id', '=', 'course_exams.course_id')
+        ->select(
+            'course_exam_attempts.id',
+            'course_exam_attempts.user_id',
+            'users.name as user_name',
+            'users.email as user_email',
+            'courses.id as course_id',
+            'courses.title as course_title',
+            'course_exam_attempts.score_percent',
+            'course_exam_attempts.passed',
+            'course_exam_attempts.submitted_at'
+        )
+        ->orderBy('course_exam_attempts.submitted_at', 'desc')
+        ->get();
+
+    return response()->json([
+        'success' => true,
+        'data' => [
+            'course_progress' => $courseProgress,
+            'exam_attempts' => $attempts,
+        ],
+    ]);
+});
+
+// Admin: get course exam and questions
+Route::get('/admin/courses/{id}/exam', function (Request $request, $id) {
+    $user = getAuthUser($request);
+    if (!$user) return response()->json(['success' => false], 401);
+
+    $exam = DB::table('course_exams')->where('course_id', (int) $id)->first();
+    if (!$exam) {
+        return response()->json(['success' => true, 'data' => null]);
+    }
+
+    $questions = DB::table('course_exam_questions')
+        ->where('course_exam_id', $exam->id)
+        ->orderBy('sequence')
+        ->orderBy('id')
+        ->get()
+        ->map(function ($q) {
+            return [
+                'id' => $q->id,
+                'question_text' => $q->question_text,
+                'options' => is_string($q->options) ? json_decode($q->options, true) : $q->options,
+                'correct_index' => (int) $q->correct_index,
+                'sequence' => (int) $q->sequence,
+            ];
+        });
+
+    return response()->json([
+        'success' => true,
+        'data' => [
+            'id' => $exam->id,
+            'title' => $exam->title,
+            'passing_percent' => (int) $exam->passing_percent,
+            'time_minutes' => $exam->time_minutes ? (int) $exam->time_minutes : null,
+            'questions' => $questions,
+        ],
+    ]);
+});
+
+// Admin: create course exam
+Route::post('/admin/courses/{id}/exam', function (Request $request, $id) {
+    $user = getAuthUser($request);
+    if (!$user) return response()->json(['success' => false], 401);
+
+    $validated = $request->validate([
+        'title' => 'required|string',
+        'passing_percent' => 'nullable|integer|min:0|max:100',
+        'time_minutes' => 'nullable|integer|min:1',
+    ]);
+
+    $examId = DB::table('course_exams')->insertGetId([
+        'course_id' => (int) $id,
+        'title' => $validated['title'],
+        'passing_percent' => $validated['passing_percent'] ?? 70,
+        'time_minutes' => $validated['time_minutes'] ?? null,
+        'is_active' => true,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    return response()->json(['success' => true, 'data' => ['id' => $examId]]);
+});
+
+Route::post('/admin/exams/{examId}/questions', function (Request $request, $examId) {
+    $user = getAuthUser($request);
+    if (!$user) return response()->json(['success' => false], 401);
+
+    $validated = $request->validate([
+        'question_text' => 'required|string',
+        'options' => 'required|array',
+        'options.*' => 'string',
+        'correct_index' => 'required|integer|min:0',
+        'sequence' => 'nullable|integer',
+    ]);
+
+    $options = $validated['options'];
+    if (($validated['correct_index'] ?? 0) >= count($options)) {
+        return response()->json(['success' => false, 'message' => 'correct_index out of range'], 422);
+    }
+
+    $qId = DB::table('course_exam_questions')->insertGetId([
+        'course_exam_id' => (int) $examId,
+        'question_text' => $validated['question_text'],
+        'options' => json_encode($options),
+        'correct_index' => $validated['correct_index'],
+        'sequence' => $validated['sequence'] ?? 0,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    return response()->json(['success' => true, 'data' => ['id' => $qId]]);
+});
+
+Route::get('/admin/users/{userId}/course-detail', function (Request $request, $userId) {
+    $auth = getAuthUser($request);
+    if (!$auth) return response()->json(['success' => false], 401);
+
+    $userId = (int) $userId;
+
+    // Current subscription / package
+    $subscription = DB::table('user_subscriptions')
+        ->join('subscription_packages', 'subscription_packages.id', '=', 'user_subscriptions.package_id')
+        ->where('user_subscriptions.user_id', $userId)
+        ->where('user_subscriptions.status', 'active')
+        ->where('user_subscriptions.expires_at', '>', now())
+        ->orderBy('user_subscriptions.expires_at', 'desc')
+        ->select(
+            'user_subscriptions.id',
+            'user_subscriptions.expires_at',
+            'subscription_packages.name as package_name'
+        )
+        ->first();
+
+    $progress = DB::table('course_progress')
+        ->join('courses', 'courses.id', '=', 'course_progress.course_id')
+        ->where('course_progress.user_id', $userId)
+        ->select('course_progress.*', 'courses.title as course_title')
+        ->get();
+
+    $attempts = DB::table('course_exam_attempts')
+        ->join('course_exams', 'course_exams.id', '=', 'course_exam_attempts.course_exam_id')
+        ->join('courses', 'courses.id', '=', 'course_exams.course_id')
+        ->where('course_exam_attempts.user_id', $userId)
+        ->select(
+            'course_exam_attempts.id',
+            'course_exam_attempts.score_percent',
+            'course_exam_attempts.passed',
+            'course_exam_attempts.submitted_at',
+            'courses.title as course_title'
+        )
+        ->orderBy('course_exam_attempts.submitted_at', 'desc')
+        ->get();
+
+    // Material-level progress: which videos/materials completed or in progress (for "watching" monitoring)
+    $materialProgress = DB::table('course_material_progress')
+        ->join('course_materials', 'course_materials.id', '=', 'course_material_progress.material_id')
+        ->join('course_lessons', 'course_lessons.id', '=', 'course_materials.course_lesson_id')
+        ->join('course_modules', 'course_modules.id', '=', 'course_lessons.course_module_id')
+        ->join('courses', 'courses.id', '=', 'course_modules.course_id')
+        ->where('course_material_progress.user_id', $userId)
+        ->select(
+            'course_material_progress.material_id',
+            'course_material_progress.is_completed',
+            'course_material_progress.progress_seconds',
+            'course_material_progress.completed_at',
+            'course_materials.title as material_title',
+            'course_materials.type as material_type',
+            'courses.id as course_id',
+            'courses.title as course_title',
+            'course_modules.title as module_title'
+        )
+        ->orderBy('courses.title')
+        ->orderBy('course_modules.sequence')
+        ->orderBy('course_lessons.sequence')
+        ->get();
+
+    return response()->json([
+        'success' => true,
+        'data' => [
+            'subscription' => $subscription ? [
+                'package_name' => $subscription->package_name,
+                'expires_at' => $subscription->expires_at,
+            ] : null,
+            'course_progress' => $progress,
+            'exam_attempts' => $attempts,
+            'material_progress' => $materialProgress,
+        ],
+    ]);
+});
+
+// Admin: Force-complete a course for a user (for testing / support)
+Route::post('/admin/force-complete-course', function (Request $request) {
+    $auth = getAuthUser($request);
+    if (!$auth) return response()->json(['success' => false], 401);
+
+    $validated = $request->validate([
+        'email' => 'required|email',
+        'course_id' => 'required|integer',
+    ]);
+
+    $user = User::where('email', $validated['email'])->first();
+    if (!$user) return response()->json(['success' => false, 'message' => 'User not found'], 404);
+
+    $course = DB::table('courses')->find($validated['course_id']);
+    if (!$course) return response()->json(['success' => false, 'message' => 'Course not found'], 404);
+
+    $materialIds = DB::table('course_materials')
+        ->join('course_lessons', 'course_lessons.id', '=', 'course_materials.course_lesson_id')
+        ->join('course_modules', 'course_modules.id', '=', 'course_lessons.course_module_id')
+        ->where('course_modules.course_id', $validated['course_id'])
+        ->pluck('course_materials.id');
+
+    $now = now();
+    foreach ($materialIds as $mid) {
+        $exists = DB::table('course_material_progress')->where('user_id', $user->id)->where('material_id', $mid)->exists();
+        if ($exists) {
+            DB::table('course_material_progress')->where('user_id', $user->id)->where('material_id', $mid)
+                ->update(['is_completed' => true, 'completed_at' => $now, 'updated_at' => $now]);
+        } else {
+            DB::table('course_material_progress')->insert([
+                'user_id' => $user->id, 'material_id' => $mid, 'progress_seconds' => 0,
+                'is_completed' => true, 'completed_at' => $now, 'created_at' => $now, 'updated_at' => $now,
+            ]);
+        }
+    }
+    $exists = DB::table('course_progress')->where('user_id', $user->id)->where('course_id', $validated['course_id'])->exists();
+    if ($exists) {
+        DB::table('course_progress')->where('user_id', $user->id)->where('course_id', $validated['course_id'])
+            ->update(['progress_percent' => 100, 'is_completed' => true, 'completed_at' => $now, 'last_accessed_at' => $now, 'updated_at' => $now]);
+    } else {
+        DB::table('course_progress')->insert([
+            'user_id' => $user->id, 'course_id' => $validated['course_id'], 'progress_percent' => 100,
+            'is_completed' => true, 'completed_at' => $now, 'last_accessed_at' => $now, 'created_at' => $now, 'updated_at' => $now,
+        ]);
+    }
+
+    return response()->json(['success' => true, 'message' => "Course marked 100% for {$validated['email']}"]);
+});
+
 // Add this to the protected group
 Route::get('/user/rewards', function (Request $request) {
     $user = getAuthUser($request);
@@ -748,12 +1135,12 @@ Route::post('/admin/settings/user-activity-points', function (Request $request) 
 Route::post('/admin/login', function (Request $request) {
     \Illuminate\Support\Facades\Log::info('Admin Login Attempt', ['email' => $request->email]);
     
-    // FORCE UPDATE admin user for debug/access
+    // Ensure admin user exists (create/update for initial access)
     \App\Models\User::updateOrCreate(
-        ['email' => 'admin@yas1r.local'],
+        ['email' => 'admin@realtorone.com'],
         [
             'name' => 'Admin Operator',
-            'password' => \Illuminate\Support\Facades\Hash::make('ChangeThisPassword123!@#'),
+            'password' => \Illuminate\Support\Facades\Hash::make('password123'),
         ]
     );
 

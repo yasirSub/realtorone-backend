@@ -41,22 +41,21 @@ class CourseController extends Controller
     }
 
     /**
-     * Display the specified resource.
+     * Display the specified resource (admin curriculum editor).
+     * Loads all modules and lessons regardless of is_published so admins can see and edit everything.
      */
     public function show(string $id)
     {
         $course = \App\Models\Course::with([
-            'modules' => function($query) {
-                $query->where('is_published', true)->orderBy('sequence');
+            'modules' => function ($query) {
+                $query->orderBy('sequence');
             },
-            'modules.lessons' => function($query) {
-                $query->where('is_published', true)->orderBy('sequence');
+            'modules.lessons' => function ($query) {
+                $query->orderBy('sequence');
             },
             'modules.lessons.materials'
-        ])
-        ->where('is_published', true)
-        ->findOrFail($id);
-            
+        ])->findOrFail($id);
+
         return response()->json(['success' => true, 'data' => $course]);
     }
 
