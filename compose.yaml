@@ -7,13 +7,17 @@ services:
         ports:
             - '8000:8000'
         volumes:
-            - .:/var/www/html
-            - ./php.ini:/usr/local/etc/php/php.ini
+            # Keep only PHP config mount; do NOT mount the whole app in production
+            - ./php.ini:/usr/local/etc/php/php.ini:ro
         environment:
             APP_ENV: ${APP_ENV:-production}
-            APP_KEY: 'base64:k7rgmQg7V8UNLfXOQd0CimcjJQWCW5ODov2KzdLSgoA='
+            # IMPORTANT: set this in your VPS stack env (keep stable across restarts)
+            APP_KEY: ${APP_KEY:-base64:k7rgmQg7V8UNLfXOQd0CimcjJQWCW5ODov2KzdLSgoA=}
             APP_DEBUG: ${APP_DEBUG:-false}
-            APP_URL: ${APP_URL:-http://api.aanantbishthealing.com}
+            APP_URL: ${APP_URL:-http://localhost:8000}
+            WAIT_FOR_DB: ${WAIT_FOR_DB:-1}
+            RUN_MIGRATIONS: ${RUN_MIGRATIONS:-1}
+            RUN_SEED: ${RUN_SEED:-1}
             DB_CONNECTION: mysql
             DB_HOST: mysql
             DB_PORT: 3306
@@ -22,6 +26,7 @@ services:
             DB_PASSWORD: password
         depends_on:
             - mysql
+
     mysql:
         image: 'mysql:8.4'
         restart: always
@@ -34,6 +39,12 @@ services:
             MYSQL_PASSWORD: password
         volumes:
             - 'mysql-data:/var/lib/mysql'
+        healthcheck:
+            test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+            interval: 5s
+            timeout: 3s
+            retries: 30
+
     phpmyadmin:
         image: phpmyadmin/phpmyadmin
         restart: always
@@ -47,6 +58,7 @@ services:
             MYSQL_ROOT_PASSWORD: password
         depends_on:
             - mysql
+
 volumes:
     mysql-data:
         driver: local
