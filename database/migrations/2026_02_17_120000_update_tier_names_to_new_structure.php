@@ -53,7 +53,32 @@ return new class extends Migration
             DB::statement("COMMIT");
             DB::statement("PRAGMA foreign_keys=on");
         } else {
-            // For MySQL/PostgreSQL, alter the enum
+            // Expand the enum first so legacy values can be rewritten safely.
+            DB::statement("ALTER TABLE courses MODIFY COLUMN min_tier ENUM('Free', 'Silver', 'Gold', 'Diamond', 'Consultant', 'Rainmaker', 'Titan', 'Titan - GOLD', 'Titan-GOLD') DEFAULT 'Consultant'");
+
+            // Normalize legacy values before tightening the enum constraint.
+            DB::table('courses')
+                ->where('min_tier', 'Free')
+                ->update(['min_tier' => 'Consultant']);
+
+            DB::table('courses')
+                ->where('min_tier', 'Silver')
+                ->update(['min_tier' => 'Rainmaker']);
+
+            DB::table('courses')
+                ->where('min_tier', 'Gold')
+                ->update(['min_tier' => 'Titan']);
+
+            DB::table('courses')
+                ->where('min_tier', 'Diamond')
+                ->update(['min_tier' => 'Titan']);
+
+            DB::table('courses')
+                ->where('min_tier', 'Titan - GOLD')
+                ->orWhere('min_tier', 'Titan-GOLD')
+                ->update(['min_tier' => 'Titan']);
+
+            // For MySQL/PostgreSQL, alter the enum after data is compatible.
             DB::statement("ALTER TABLE courses MODIFY COLUMN min_tier ENUM('Consultant', 'Rainmaker', 'Titan') DEFAULT 'Consultant'");
         }
 
@@ -124,7 +149,7 @@ return new class extends Migration
             DB::table('subscription_packages')->where('name', 'Diamond')->delete();
         }
 
-        // Courses table already updated above (for SQLite) or needs update for MySQL
+        // Courses table already updated above before altering the enum.
         if (DB::getDriverName() !== 'sqlite') {
             DB::table('courses')
                 ->where('min_tier', 'Free')
