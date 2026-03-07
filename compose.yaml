@@ -14,6 +14,9 @@ services:
             # IMPORTANT: set this in your VPS stack env (keep stable across restarts)
             APP_KEY: ${APP_KEY:-base64:k7rgmQg7V8UNLfXOQd0CimcjJQWCW5ODov2KzdLSgoA=}
             APP_DEBUG: ${APP_DEBUG:-false}
+            # IMPORTANT: override this on the VPS with the real public backend URL.
+            # Course uploads no longer depend on APP_URL for media playback, but other
+            # generated links in Laravel still may.
             APP_URL: ${APP_URL:-http://localhost:8000}
             WAIT_FOR_DB: ${WAIT_FOR_DB:-1}
             RUN_MIGRATIONS: ${RUN_MIGRATIONS:-1}

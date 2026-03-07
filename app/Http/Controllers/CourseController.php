@@ -180,7 +180,7 @@ class CourseController extends Controller
         $file = $request->file('file');
         $filename = time() . '_' . $file->getClientOriginalName();
         $path = $file->storeAs('course-assets', $filename, 'public');
-        $url = asset('storage/' . $path);
+        $url = '/api/stream/' . rawurlencode($filename);
 
         return response()->json([
             'success' => true,
