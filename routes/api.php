@@ -308,6 +308,8 @@ Route::delete('/admin/coupons/{id}', function ($id) {
 });
 
 // Courses Management
+// Upload route MUST come before resource route to avoid 'upload' being matched as a course ID
+Route::post('admin/courses/upload', [\App\Http\Controllers\CourseController::class, 'uploadFile']);
 Route::resource('admin/courses', \App\Http\Controllers\CourseController::class);
 Route::post('admin/courses/{id}/modules', [\App\Http\Controllers\CourseController::class, 'storeModule']);
 Route::put('admin/modules/{id}', [\App\Http\Controllers\CourseController::class, 'updateModule']);
@@ -320,8 +322,6 @@ Route::delete('admin/lessons/{id}', [\App\Http\Controllers\CourseController::cla
 Route::post('admin/lessons/{id}/materials', [\App\Http\Controllers\CourseController::class, 'storeMaterial']);
 Route::put('admin/materials/{id}', [\App\Http\Controllers\CourseController::class, 'updateMaterial']);
 Route::delete('admin/materials/{id}', [\App\Http\Controllers\CourseController::class, 'destroyMaterial']);
-
-Route::post('admin/courses/upload', [\App\Http\Controllers\CourseController::class, 'uploadFile']);
 
 // Video streaming with range request support (required for HTML5 video playback)
 Route::get('stream/{filename}', function (Request $request, $filename) {
