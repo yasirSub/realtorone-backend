@@ -94,3 +94,24 @@ Returns app status and database connection status.
 `POST /learning/progress`
 - **Auth required**
 - **Body:** `{ "content_id": 1, "progress_percent": 100 }`
+
+---
+
+## 💬 Reven Chat (AI Assistant)
+
+Chat works **without OPENAI_API_KEY** using basic keyword replies. Add `OPENAI_API_KEY` to `.env` for AI-powered answers.
+
+### Send Message
+`POST /chat`
+- **Auth required**
+- **Body:** `{ "message": "...", "session_id": 123 }` (session_id optional)
+- **Response:** `{ "success": true, "reply": "...", "session_id": 123 }`
+
+### Chat History
+`GET /chat/history`
+- **Auth required**
+- Returns list of user's chat sessions.
+
+`GET /chat/history/{sessionId}`
+- **Auth required**
+- Returns messages for a session.

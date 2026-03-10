@@ -32,6 +32,36 @@ Be concise, helpful, and encouraging. If asked about something outside this scop
 PROMPT;
     }
 
+    /**
+     * Basic keyword replies when OPENAI_API_KEY is not set.
+     */
+    private function getBasicReply(string $message): string
+    {
+        $text = strtolower(trim($message));
+        if (preg_match('/\b(hi|hello|hey|hola|howdy)\b/', $text)) {
+            return 'Hi! I\'m Reven, your assistant for the RealtorOne app. How can I help you today?';
+        }
+        if (preg_match('/\b(what can you do|help|capabilities)\b/', $text)) {
+            return 'I can help with courses & training, daily tasks, leaderboard & badges, and account settings. Add OPENAI_API_KEY to enable AI-powered answers!';
+        }
+        if (preg_match('/\b(course|courses|training|learning|enrolled)\b/', $text)) {
+            return 'Your courses are in the Courses tab. Check the Cold Calling Master and Million Dirham Beliefs programs. Enable AI for detailed help!';
+        }
+        if (preg_match('/\b(task|tasks|today|daily|dashboard)\b/', $text)) {
+            return 'Daily tasks are on the Dashboard. Log activities there to build your momentum score.';
+        }
+        if (preg_match('/\b(badge|badges|leaderboard|rank|streak)\b/', $text)) {
+            return 'Head to the Badges tab for milestones and Leaderboard for your rank. Complete tasks and courses to climb!';
+        }
+        if (preg_match('/\b(profile|account|settings|update)\b/', $text)) {
+            return 'Tap your avatar to open profile settings and update name, photo, and preferences.';
+        }
+        if (preg_match('/\b(cold call|cold calling|prospect|follow.?up)\b/i', $text)) {
+            return 'Cold calling tips: great opener + active listening + clear objective. Check the Cold Calling Master course in your Courses tab!';
+        }
+        return 'I\'m here to help with courses, tasks, badges, and real estate tips. For smarter replies, add OPENAI_API_KEY to .env.';
+    }
+
     public function send(Request $request): JsonResponse
     {
         $user = getAuthUser($request);
@@ -85,10 +115,18 @@ PROMPT;
 
         $apiKey = config('services.openai.key');
         if (!$apiKey) {
+            $reply = $this->getBasicReply($message);
+            ChatMessage::create([
+                'chat_session_id' => $session->id,
+                'user_id' => null,
+                'role' => 'assistant',
+                'content' => $reply,
+            ]);
             return response()->json([
-                'success' => false,
-                'message' => 'AI service not configured. Add OPENAI_API_KEY to .env',
-            ], 503);
+                'success' => true,
+                'reply' => $reply,
+                'session_id' => $session->id,
+            ]);
         }
 
         try {
