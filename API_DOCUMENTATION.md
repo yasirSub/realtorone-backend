@@ -115,3 +115,7 @@ Chat works **without OPENAI_API_KEY** using basic keyword replies. Add `OPENAI_A
 `GET /chat/history/{sessionId}`
 - **Auth required**
 - Returns messages for a session.
+
+`DELETE /chat/history/{sessionId}`
+- **Auth required**
+- Deletes a chat session and all its messages.

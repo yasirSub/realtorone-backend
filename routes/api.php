@@ -4,7 +4,9 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Str;
 
 // Helper function to get authenticated user
 function getAuthUser(Request $request) {
@@ -81,6 +83,7 @@ Route::get('/health', function () {
 Route::post('/chat', [\App\Http\Controllers\ChatController::class, 'send']);
 Route::get('/chat/history', [\App\Http\Controllers\ChatController::class, 'history']);
 Route::get('/chat/history/{sessionId}', [\App\Http\Controllers\ChatController::class, 'history']);
+Route::delete('/chat/history/{sessionId}', [\App\Http\Controllers\ChatController::class, 'deleteSession']);
 
 Route::get('/admin/stats', function () {
     try {
@@ -1138,7 +1141,7 @@ Route::post('/admin/settings/user-activity-points', function (Request $request) 
 });
 
 Route::post('/admin/login', function (Request $request) {
-    \Illuminate\Support\Facades\Log::info('Admin Login Attempt', ['email' => $request->email]);
+    Log::info('Admin Login Attempt', ['email' => $request->email]);
     
     // Ensure admin user exists (create/update for initial access)
     \App\Models\User::updateOrCreate(
@@ -1160,7 +1163,7 @@ Route::post('/admin/login', function (Request $request) {
         $token = bin2hex(random_bytes(32));
         $user->update(['remember_token' => $token]);
         
-        \Illuminate\Support\Facades\Log::info('Admin Login Success', ['user_id' => $user->id]);
+        Log::info('Admin Login Success', ['user_id' => $user->id]);
         
         // Attach momentum data
         $today = now()->toDateString();
@@ -1177,7 +1180,7 @@ Route::post('/admin/login', function (Request $request) {
         ]);
     }
 
-    \Illuminate\Support\Facades\Log::warning('Admin Login Failed', ['email' => $request->email]);
+    Log::warning('Admin Login Failed', ['email' => $request->email]);
 
     return response()->json([
         'message' => 'Credentials mismatch. Error 401: Unauthorized access to system core.',
@@ -2419,7 +2422,7 @@ Route::group(['middleware' => []], function () {
         $client->notes = json_encode($meta);
         $client->save();
 
-        \Log::info('[DAILY_LOG_DEBUG] POST /clients/' . $id . '/actions', [
+        Log::info('[DAILY_LOG_DEBUG] POST /clients/' . $id . '/actions', [
             'action_key' => $data['action_key'],
             'status' => $data['status'],
             'date' => $date,
@@ -2471,9 +2474,9 @@ Route::group(['middleware' => []], function () {
                         'value' => 0,
                         'notes' => $notesPayload,
                     ]);
-                    \Log::info('[DAILY_LOG_DEBUG] Created revenue_action Result', ['id' => $result->id, 'client_name' => $client->client_name, 'action_label' => $actionLabel]);
+                    Log::info('[DAILY_LOG_DEBUG] Created revenue_action Result', ['id' => $result->id, 'client_name' => $client->client_name, 'action_label' => $actionLabel]);
                 } catch (\Throwable $e) {
-                    \Log::error('[DAILY_LOG_DEBUG] Failed to create Result', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+                    Log::error('[DAILY_LOG_DEBUG] Failed to create Result', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
                 }
             }
         }
@@ -2888,7 +2891,7 @@ Route::group(['middleware' => []], function () {
             ->limit(10)
             ->get(['id', 'type', 'client_name', 'value', 'source', 'date', 'created_at', 'notes']);
 
-        \Log::info('[REVENUE_DEBUG] GET /revenue/metrics', [
+        Log::info('[REVENUE_DEBUG] GET /revenue/metrics', [
             'period' => $period,
             'from' => $from,
             'to' => $to,

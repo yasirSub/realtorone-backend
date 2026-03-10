@@ -4,9 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Models\ChatMessage;
 use App\Models\ChatSession;
+use App\Models\Course;
+use App\Models\User;
+use Illuminate\Http\Client\Response as HttpResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class ChatController extends Controller
@@ -34,32 +38,72 @@ PROMPT;
 
     /**
      * Basic keyword replies when OPENAI_API_KEY is not set.
+     * Returns ['reply' => string, 'courses' => array|null, 'commands' => array|null].
      */
-    private function getBasicReply(string $message): string
+    private function getBasicReply(string $message, ?User $user): array
     {
         $text = strtolower(trim($message));
         if (preg_match('/\b(hi|hello|hey|hola|howdy)\b/', $text)) {
-            return 'Hi! I\'m Reven, your assistant for the RealtorOne app. How can I help you today?';
+            return ['reply' => 'Hi! I\'m Reven, your assistant for the RealtorOne app. Type **help** to see what I can do.', 'courses' => null, 'commands' => null];
         }
-        if (preg_match('/\b(what can you do|help|capabilities)\b/', $text)) {
-            return 'I can help with courses & training, daily tasks, leaderboard & badges, and account settings. Add OPENAI_API_KEY to enable AI-powered answers!';
+        if (preg_match('/\b(what can you do|help|commands|capabilities)\b/', $text)) {
+            $commands = $this->getHelpCommands();
+            return [
+                'reply' => 'Here\'s what I can do. Tap any command below or type it in the chat:',
+                'courses' => null,
+                'commands' => $commands,
+            ];
         }
-        if (preg_match('/\b(course|courses|training|learning|enrolled)\b/', $text)) {
-            return 'Your courses are in the Courses tab. Check the Cold Calling Master and Million Dirham Beliefs programs. Enable AI for detailed help!';
+        if (preg_match('/\b(course|courses|training|learning|enrolled|what are the courses|list courses|show courses)\b/', $text)) {
+            $courses = $this->fetchCourseList();
+            $reply = $courses->isEmpty()
+                ? 'No courses available right now. Check the Courses tab for updates!'
+                : 'Here are the courses available to you:';
+            return [
+                'reply' => $reply,
+                'courses' => $courses->toArray(),
+            ];
         }
         if (preg_match('/\b(task|tasks|today|daily|dashboard)\b/', $text)) {
-            return 'Daily tasks are on the Dashboard. Log activities there to build your momentum score.';
+            return ['reply' => 'Daily tasks are on the Dashboard. Log activities there to build your momentum score.', 'courses' => null, 'commands' => null];
         }
         if (preg_match('/\b(badge|badges|leaderboard|rank|streak)\b/', $text)) {
-            return 'Head to the Badges tab for milestones and Leaderboard for your rank. Complete tasks and courses to climb!';
+            return ['reply' => 'Head to the Badges tab for milestones and Leaderboard for your rank. Complete tasks and courses to climb!', 'courses' => null, 'commands' => null];
         }
         if (preg_match('/\b(profile|account|settings|update)\b/', $text)) {
-            return 'Tap your avatar to open profile settings and update name, photo, and preferences.';
+            return ['reply' => 'Tap your avatar to open profile settings and update name, photo, and preferences.', 'courses' => null, 'commands' => null];
         }
         if (preg_match('/\b(cold call|cold calling|prospect|follow.?up)\b/i', $text)) {
-            return 'Cold calling tips: great opener + active listening + clear objective. Check the Cold Calling Master course in your Courses tab!';
+            return ['reply' => 'Cold calling tips: great opener + active listening + clear objective. Check the Cold Calling Master course in your Courses tab!', 'courses' => null, 'commands' => null];
         }
-        return 'I\'m here to help with courses, tasks, badges, and real estate tips. For smarter replies, add OPENAI_API_KEY to .env.';
+        return ['reply' => 'I\'m here to help! Type **help** to see what I can do, or try: courses, tasks, badges, profile.', 'courses' => null, 'commands' => null];
+    }
+
+    private function getHelpCommands(): array
+    {
+        return [
+            ['keyword' => 'courses', 'label' => '📚 Courses', 'description' => 'See your available courses'],
+            ['keyword' => 'tasks', 'label' => '📋 Tasks', 'description' => 'Daily tasks & dashboard'],
+            ['keyword' => 'badges', 'label' => '🏆 Badges', 'description' => 'Leaderboard & milestones'],
+            ['keyword' => 'profile', 'label' => '⚙️ Profile', 'description' => 'Account settings'],
+            ['keyword' => 'cold calling tips', 'label' => '📞 Cold calling', 'description' => 'Tips & training'],
+        ];
+    }
+
+    private function fetchCourseList()
+    {
+        return Course::orderBy('module_number')
+            ->orderBy('sequence')
+            ->get(['id', 'title', 'description', 'module_number']);
+    }
+
+    private function parseStoredContent(string $content): string
+    {
+        if ($content === '' || ($content[0] ?? '') !== '{') {
+            return $content;
+        }
+        $decoded = json_decode($content, true);
+        return is_array($decoded) && isset($decoded['text']) ? (string) $decoded['text'] : $content;
     }
 
     public function send(Request $request): JsonResponse
@@ -104,32 +148,58 @@ PROMPT;
             ->orderBy('id')
             ->get();
 
+        $systemContent = $this->getSystemPrompt();
+        $coursesForResponse = null;
+        if (preg_match('/\b(course|courses|training|learning|enrolled|what are the courses|list courses|show courses)\b/i', $message)) {
+            $coursesForResponse = $this->fetchCourseList()->toArray();
+            if (!empty($coursesForResponse)) {
+                $list = collect($coursesForResponse)->map(fn ($c) => '- ' . ($c['title'] ?? '') . (isset($c['description']) ? ': ' . Str::limit($c['description'], 80) : ''))->implode("\n");
+                $systemContent .= "\n\nCurrent courses in the system:\n" . $list;
+            }
+        }
+
         $openaiMessages = [
-            ['role' => 'system', 'content' => $this->getSystemPrompt()],
+            ['role' => 'system', 'content' => $systemContent],
         ];
 
         $recent = $history->take(-self::MAX_HISTORY);
         foreach ($recent as $m) {
-            $openaiMessages[] = ['role' => $m->role, 'content' => $m->content];
+            $parsed = $this->parseStoredContent($m->content);
+            $openaiMessages[] = ['role' => $m->role, 'content' => $parsed];
         }
 
         $apiKey = config('services.openai.key');
         if (!$apiKey) {
-            $reply = $this->getBasicReply($message);
+            $basic = $this->getBasicReply($message, $user);
+            $reply = $basic['reply'];
+            $courses = $basic['courses'] ?? null;
+            $commands = $basic['commands'] ?? null;
+            $contentToStore = $reply;
+            if (($courses !== null && !empty($courses)) || ($commands !== null && !empty($commands))) {
+                $contentToStore = json_encode(array_filter(['text' => $reply, 'courses' => $courses, 'commands' => $commands]));
+            }
             ChatMessage::create([
                 'chat_session_id' => $session->id,
                 'user_id' => null,
                 'role' => 'assistant',
-                'content' => $reply,
+                'content' => $contentToStore,
             ]);
-            return response()->json([
+            $payload = [
                 'success' => true,
                 'reply' => $reply,
                 'session_id' => $session->id,
-            ]);
+            ];
+            if ($courses !== null) {
+                $payload['courses'] = $courses;
+            }
+            if ($commands !== null) {
+                $payload['commands'] = $commands;
+            }
+            return response()->json($payload);
         }
 
         try {
+            /** @var HttpResponse $response */
             $response = Http::withToken($apiKey)
                 ->timeout(60)
                 ->post(self::OPENAI_URL, [
@@ -141,7 +211,7 @@ PROMPT;
             if (!$response->successful()) {
                 $body = $response->json();
                 $err = $body['error']['message'] ?? $response->body();
-                \Log::error('OpenAI error', ['status' => $response->status(), 'body' => $body]);
+                Log::error('OpenAI error', ['status' => $response->status(), 'body' => $body]);
                 return response()->json([
                     'success' => false,
                     'message' => 'AI service error: ' . $err,
@@ -149,23 +219,30 @@ PROMPT;
             }
 
             $data = $response->json();
-            $reply = $data['choices'][0]['message']['content'] ?? '';
+            $reply = trim($data['choices'][0]['message']['content'] ?? '');
 
-            // Save assistant reply
+            $contentToStore = $reply;
+            if ($coursesForResponse !== null && !empty($coursesForResponse)) {
+                $contentToStore = json_encode(['text' => $reply, 'courses' => $coursesForResponse]);
+            }
             ChatMessage::create([
                 'chat_session_id' => $session->id,
                 'user_id' => null,
                 'role' => 'assistant',
-                'content' => $reply,
+                'content' => $contentToStore,
             ]);
 
-            return response()->json([
+            $payload = [
                 'success' => true,
-                'reply' => trim($reply),
+                'reply' => $reply,
                 'session_id' => $session->id,
-            ]);
+            ];
+            if ($coursesForResponse !== null) {
+                $payload['courses'] = $coursesForResponse;
+            }
+            return response()->json($payload);
         } catch (\Throwable $e) {
-            \Log::error('Chat error', ['exception' => $e->getMessage()]);
+            Log::error('Chat error', ['exception' => $e->getMessage()]);
             return response()->json([
                 'success' => false,
                 'message' => 'Something went wrong. Please try again.',
@@ -199,5 +276,21 @@ PROMPT;
             ->limit(20)
             ->get(['id', 'title', 'created_at', 'updated_at']);
         return response()->json(['success' => true, 'sessions' => $sessions]);
+    }
+
+    public function deleteSession(Request $request, int $sessionId): JsonResponse
+    {
+        $user = getAuthUser($request);
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $session = ChatSession::where('id', $sessionId)->where('user_id', $user->id)->first();
+        if (!$session) {
+            return response()->json(['success' => false, 'message' => 'Session not found'], 404);
+        }
+
+        $session->delete();
+        return response()->json(['success' => true, 'message' => 'Chat deleted']);
     }
 }
