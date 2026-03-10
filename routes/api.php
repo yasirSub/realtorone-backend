@@ -77,6 +77,11 @@ Route::get('/health', function () {
     ]);
 });
 
+// Reven chatbot
+Route::post('/chat', [\App\Http\Controllers\ChatController::class, 'send']);
+Route::get('/chat/history', [\App\Http\Controllers\ChatController::class, 'history']);
+Route::get('/chat/history/{sessionId}', [\App\Http\Controllers\ChatController::class, 'history']);
+
 Route::get('/admin/stats', function () {
     try {
         $userCount = \App\Models\User::count();
