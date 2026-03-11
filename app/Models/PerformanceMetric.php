@@ -19,7 +19,8 @@ class PerformanceMetric extends Model
         'leads_generated',
         'deals_closed',
         'commission_earned',
-        'streak_count'
+        'streak_count',
+        'metadata'
     ];
 
     protected $casts = [
@@ -31,7 +32,8 @@ class PerformanceMetric extends Model
         'leads_generated' => 'integer',
         'deals_closed' => 'integer',
         'commission_earned' => 'decimal:2',
-        'streak_count' => 'integer'
+        'streak_count' => 'integer',
+        'metadata' => 'array'
     ];
 
     public function user()

@@ -7,7 +7,6 @@ use App\Models\LeaderboardCache;
 use App\Models\PerformanceMetric;
 use App\Models\Result;
 use App\Models\User;
-use App\Models\WeeklyScore;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -22,11 +21,58 @@ class LeaderboardService
         $weekStart = Carbon::today()->startOfWeek()->toDateString();
         $monthStart = Carbon::today()->startOfMonth()->toDateString();
 
+        $this->buildTopRealtorLeaderboard($today, $weekStart);
         $this->buildConsistencyLeaderboard($today, $weekStart);
         $this->buildMomentumClimbersLeaderboard($today);
         $this->buildDealMakersLeaderboard($today, $monthStart);
         $this->buildRevenueLeaderboard($today, $monthStart);
         $this->buildIdentityDisciplineLeaderboard($today, $weekStart);
+    }
+
+    /**
+     * Primary leaderboard: weighted Top Realtor score.
+     */
+    private function buildTopRealtorLeaderboard($today, $weekStart)
+    {
+        $scores = PerformanceMetric::with('user:id,name,current_streak,last_activity_date')
+            ->where('date', '>=', $weekStart)
+            ->get()
+            ->groupBy('user_id')
+            ->map(function ($metrics, $userId) {
+                $latestMetric = $metrics->sortByDesc('date')->first();
+                $latestMetadata = $latestMetric->metadata ?? [];
+
+                $revenueMomentum = (int) ($latestMetadata['revenue_momentum_score'] ?? $latestMetric->total_momentum_score ?? 0);
+                $consistency = (int) ($latestMetadata['consistency_index'] ?? $latestMetric->results_score ?? 0);
+                $weeklyPerformance = (int) ($latestMetadata['weekly_performance_score'] ?? round(($revenueMomentum * 0.6) + ($consistency * 0.4)));
+                $leaderboardScore = round(($revenueMomentum * 0.5) + ($consistency * 0.25) + ($weeklyPerformance * 0.25), 1);
+
+                $previousMetric = $metrics->sortByDesc('date')->skip(1)->first();
+                $previousLeaderboardScore = null;
+                if ($previousMetric) {
+                    $previousMetadata = $previousMetric->metadata ?? [];
+                    $previousLeaderboardScore = $previousMetadata['leaderboard_score'] ?? null;
+                }
+
+                return [
+                    'user_id' => (int) $userId,
+                    'score' => (int) round($leaderboardScore),
+                    'metadata' => [
+                        'leaderboard_score' => $leaderboardScore,
+                        'revenue_momentum' => $revenueMomentum,
+                        'consistency_index' => $consistency,
+                        'weekly_performance' => $weeklyPerformance,
+                        'daily_revenue_points' => (int) ($latestMetadata['daily_revenue_points'] ?? $latestMetric->conscious_score ?? 0),
+                        'subconscious_points' => (int) ($latestMetric->subconscious_score ?? 0),
+                        'streak' => $latestMetric->streak_count ?? 0,
+                        'score_delta' => $previousLeaderboardScore !== null ? round($leaderboardScore - (float) $previousLeaderboardScore, 1) : null,
+                    ],
+                ];
+            })
+            ->sortByDesc('score')
+            ->values();
+
+        $this->saveLeaderboard($scores, 'top_realtor', 'weekly', $today);
     }
 
     /**
@@ -198,6 +244,8 @@ class LeaderboardService
     {
         $today = Carbon::today()->toDateString();
 
+        $this->refreshLeaderboards();
+
         $entries = LeaderboardCache::with('user:id,name,profile_photo_path,current_streak,rank')
             ->where('category', $category)
             ->where('period', $period)
@@ -261,6 +309,7 @@ class LeaderboardService
                 'deal_maker' => "🎯 Focus on pipeline quality. One great deal can change everything.",
                 'revenue' => "💎 Revenue follows consistency. You're building the foundation.",
                 'identity_discipline' => "🧠 Identity work is invisible progress. Trust the process.",
+                'top_realtor' => "🏆 You are building elite consistency. Stack strong days and the rank will follow.",
             ];
             return $messages[$category] ?? "📊 You're making progress. Keep going.";
         }

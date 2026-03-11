@@ -16,36 +16,45 @@ function getAuthUser(Request $request) {
 }
 
 function seedDefaultActivityTypes() {
-    // Identity Conditioning: Min 2 activities, Max Score 40 (from diagram)
-    $identityKeys = ['journaling', 'webinar', 'visualization', 'affirmations', 'inner_game_audio', 'guided_reset'];
+    $identityKeys = [
+        'visualization',
+        'affirmations',
+        'gratitude_journaling',
+        'mindset_training',
+        'audio_reprogramming',
+        'webinar_attendance',
+        'belief_exercise',
+        'calm_reset',
+        'identity_statement',
+        'morning_focus_ritual',
+    ];
     \App\Models\ActivityType::where('category', 'subconscious')->whereNotIn('type_key', $identityKeys)->delete();
 
     $types = [
-        // 1. Manual Identity Activities
-        ['name' => 'Journaling', 'points' => 4, 'category' => 'subconscious', 'type_key' => 'journaling', 'icon' => 'BookHeart'],
-        ['name' => 'Webinar', 'points' => 12, 'category' => 'subconscious', 'type_key' => 'webinar', 'icon' => 'Video'],
-        // 2. Verified Identity Activities
-        ['name' => 'Visualization', 'points' => 10, 'category' => 'subconscious', 'type_key' => 'visualization', 'icon' => 'Eye'],
-        ['name' => 'Affirmations', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'affirmations', 'icon' => 'Repeat'],
-        ['name' => 'Inner Game Audio', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'inner_game_audio', 'icon' => 'Headphones'],
-        ['name' => 'Guided Reset', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'guided_reset', 'icon' => 'Wind'],
+        ['name' => 'Visualization', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'visualization', 'icon' => 'Eye'],
+        ['name' => 'Affirmations', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'affirmations', 'icon' => 'Repeat'],
+        ['name' => 'Gratitude Journaling', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'gratitude_journaling', 'icon' => 'BookHeart'],
+        ['name' => 'Mindset Training', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'mindset_training', 'icon' => 'Brain'],
+        ['name' => 'Audio Reprogramming', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'audio_reprogramming', 'icon' => 'Headphones'],
+        ['name' => 'Webinar Attendance', 'points' => 10, 'category' => 'subconscious', 'type_key' => 'webinar_attendance', 'icon' => 'Video'],
+        ['name' => 'Belief Exercise', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'belief_exercise', 'icon' => 'BookOpen'],
+        ['name' => 'Calm Reset', 'points' => 5, 'category' => 'subconscious', 'type_key' => 'calm_reset', 'icon' => 'Wind'],
+        ['name' => 'Identity Statement', 'points' => 5, 'category' => 'subconscious', 'type_key' => 'identity_statement', 'icon' => 'ShieldCheck'],
+        ['name' => 'Morning Focus Ritual', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'morning_focus_ritual', 'icon' => 'Sunrise'],
 
-        // Conscious (Part B)
-        ['name' => 'Cold Calling', 'points' => 8, 'category' => 'conscious', 'type_key' => 'cold_calling', 'icon' => 'Phone'],
-        ['name' => 'Content Creation', 'points' => 8, 'category' => 'conscious', 'type_key' => 'content_creation', 'icon' => 'Camera'],
-        ['name' => 'Content Posting', 'points' => 6, 'category' => 'conscious', 'type_key' => 'content_posting', 'icon' => 'Share2'],
-        ['name' => 'DM Conversations', 'points' => 6, 'category' => 'conscious', 'type_key' => 'dm_conversations', 'icon' => 'MessageCircle'],
-        ['name' => 'WhatsApp Broadcast', 'points' => 6, 'category' => 'conscious', 'type_key' => 'whatsapp_broadcast', 'icon' => 'Send'],
-        ['name' => 'Mass Emailing', 'points' => 6, 'category' => 'conscious', 'type_key' => 'mass_emailing', 'icon' => 'Mail'],
-        ['name' => 'Client Meetings', 'points' => 10, 'category' => 'conscious', 'type_key' => 'client_meetings', 'icon' => 'Users'],
-        ['name' => 'Prospecting', 'points' => 8, 'category' => 'conscious', 'type_key' => 'prospecting', 'icon' => 'Search'],
-        ['name' => 'Follow-ups', 'points' => 8, 'category' => 'conscious', 'type_key' => 'follow_ups', 'icon' => 'RefreshCw'],
-        ['name' => 'Deal Negotiation', 'points' => 10, 'category' => 'conscious', 'type_key' => 'deal_negotiation', 'icon' => 'Briefcase'],
-        ['name' => 'Client Servicing', 'points' => 6, 'category' => 'conscious', 'type_key' => 'client_servicing', 'icon' => 'HeartHandshake'],
-        ['name' => 'CRM Update', 'points' => 5, 'category' => 'conscious', 'type_key' => 'crm_update', 'icon' => 'Database'],
-        ['name' => 'Site Visits', 'points' => 10, 'category' => 'conscious', 'type_key' => 'site_visits', 'icon' => 'MapPin'],
+        ['name' => 'Cold Calling Block', 'points' => 6, 'category' => 'conscious', 'type_key' => 'cold_calling_block', 'icon' => 'Phone'],
+        ['name' => 'Follow-Up Block', 'points' => 8, 'category' => 'conscious', 'type_key' => 'follow_up_block', 'icon' => 'RefreshCw'],
+        ['name' => 'Client Meeting', 'points' => 12, 'category' => 'conscious', 'type_key' => 'client_meeting', 'icon' => 'Users'],
+        ['name' => 'Site Visit', 'points' => 15, 'category' => 'conscious', 'type_key' => 'site_visit', 'icon' => 'MapPin'],
+        ['name' => 'Content Creation', 'points' => 4, 'category' => 'conscious', 'type_key' => 'content_creation', 'icon' => 'Camera'],
+        ['name' => 'Content Posting', 'points' => 3, 'category' => 'conscious', 'type_key' => 'content_posting', 'icon' => 'Share2'],
+        ['name' => 'Prospecting Session', 'points' => 7, 'category' => 'conscious', 'type_key' => 'prospecting_session', 'icon' => 'Search'],
+        ['name' => 'Deal Negotiation', 'points' => 18, 'category' => 'conscious', 'type_key' => 'deal_negotiation', 'icon' => 'Briefcase'],
+        ['name' => 'CRM Update', 'points' => 2, 'category' => 'conscious', 'type_key' => 'crm_update', 'icon' => 'Database'],
         ['name' => 'Referral Ask', 'points' => 6, 'category' => 'conscious', 'type_key' => 'referral_ask', 'icon' => 'UserPlus'],
-        ['name' => 'Skill Training', 'points' => 8, 'category' => 'conscious', 'type_key' => 'skill_training', 'icon' => 'Zap'],
+        ['name' => 'Deal Closed', 'points' => 40, 'category' => 'conscious', 'type_key' => 'deal_closed', 'icon' => 'BadgeDollarSign'],
+        ['name' => 'Network Event', 'points' => 10, 'category' => 'conscious', 'type_key' => 'network_event', 'icon' => 'Network'],
+        ['name' => 'Proposal Sent', 'points' => 14, 'category' => 'conscious', 'type_key' => 'proposal_sent', 'icon' => 'FileText'],
     ];
 
     foreach ($types as $type) {
@@ -3080,7 +3089,7 @@ Route::group(['middleware' => []], function () {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
-        $category = $request->get('category', 'consistency');
+        $category = $request->get('category', 'top_realtor');
         $period = $request->get('period', 'weekly');
 
         $service = new \App\Services\LeaderboardService();
@@ -3098,6 +3107,7 @@ Route::group(['middleware' => []], function () {
         return response()->json([
             'success' => true,
             'data' => [
+                ['key' => 'top_realtor', 'name' => 'Top Realtor', 'icon' => '🏆', 'period' => 'weekly', 'description' => 'Weighted rank from revenue momentum, consistency, and weekly performance'],
                 ['key' => 'consistency', 'name' => 'Consistency Leaders', 'icon' => '📅', 'period' => 'weekly', 'description' => 'Who shows up every single day'],
                 ['key' => 'momentum_climber', 'name' => 'Momentum Climbers', 'icon' => '🚀', 'period' => 'weekly', 'description' => 'Biggest score improvement this week'],
                 ['key' => 'deal_maker', 'name' => 'Deal Makers', 'icon' => '🤝', 'period' => 'monthly', 'description' => 'Most deals closed this month'],

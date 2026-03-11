@@ -4,9 +4,9 @@ namespace App\Services;
 
 use App\Models\Activity;
 use App\Models\PerformanceMetric;
+use App\Models\Result;
 use App\Models\User;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\DB;
 
 class PerformanceService
 {
@@ -20,55 +20,79 @@ class PerformanceService
             ->where('is_completed', true)
             ->get();
 
-        $subconsciousPoints = $activities->where('category', 'subconscious')->sum('points');
-        $consciousPoints = $activities->whereIn('category', ['task', 'conscious'])->sum('points');
-        
-        // Cap Subconscious and Conscious as per requirements
-        $cappedSubconscious = min(40, $subconsciousPoints);
-        $cappedConscious = min(45, $consciousPoints);
+        $subconsciousPoints = (int) $activities->where('category', 'subconscious')->sum('points');
+        $revenuePoints = (int) $activities->whereIn('category', ['task', 'conscious', 'revenue'])->sum('points');
 
-        // Results logic — pull from both activities and results table
-        $leadsFromActivities = $activities->where('type', 'leadOutreach')->sum('quantity');
-        $dealsFromActivities = $activities->where('type', 'meeting')->sum('quantity');
-        
-        // Also check the dedicated results table
-        $leadsFromResults = \App\Models\Result::where('user_id', $user->id)
+        $cappedSubconscious = min(20, $subconsciousPoints);
+        $cappedRevenuePoints = min(145, $revenuePoints);
+        $revenueMomentumScore = (int) round(($cappedRevenuePoints / 145) * 100);
+
+        $revenueActionCount = $activities->whereIn('category', ['task', 'conscious', 'revenue'])->count();
+        $subconsciousCount = $activities->where('category', 'subconscious')->count();
+        $isActiveDay = $revenueActionCount >= 3 && $subconsciousCount >= 2;
+
+        $weekStart = $date->copy()->startOfWeek();
+        $weekEnd = $date->copy()->endOfWeek();
+
+        $weekMetrics = PerformanceMetric::where('user_id', $user->id)
+            ->whereBetween('date', [$weekStart->toDateString(), $weekEnd->toDateString()])
+            ->get();
+
+        $activeDays = $weekMetrics->filter(function ($metric) {
+            $metadata = $metric->metadata ?? [];
+            return (bool) ($metadata['is_active_day'] ?? false);
+        })->count();
+
+        if ($isActiveDay && !$weekMetrics->contains('date', $dateStr)) {
+            $activeDays++;
+        }
+
+        $consistencyScore = (int) round(($activeDays / 7) * 100);
+        if ($subconsciousCount < 2) {
+            $consistencyScore = max(0, $consistencyScore - 10);
+        }
+
+        $weeklyPerformanceScore = (int) round(($revenueMomentumScore * 0.6) + ($consistencyScore * 0.4));
+        $leaderboardScore = round(($revenueMomentumScore * 0.5) + ($consistencyScore * 0.25) + ($weeklyPerformanceScore * 0.25), 1);
+
+        $leadsFromResults = Result::where('user_id', $user->id)
             ->where('type', 'hot_lead')
             ->where('date', $dateStr)
             ->count();
 
-        $dealsFromResults = \App\Models\Result::where('user_id', $user->id)
+        $dealsFromResults = Result::where('user_id', $user->id)
             ->where('type', 'deal_closed')
             ->where('date', $dateStr)
             ->count();
 
-        $commissionToday = \App\Models\Result::where('user_id', $user->id)
+        $commissionToday = Result::where('user_id', $user->id)
             ->whereIn('type', ['commission', 'deal_closed'])
             ->where('date', $dateStr)
             ->sum('value');
-
-        $totalLeads = $leadsFromActivities + $leadsFromResults;
-        $totalDeals = $dealsFromActivities + $dealsFromResults;
-        
-        // Points: leads = +3 each, deals = +10 each, commission logged = +2
-        $resultsPoints = ($totalLeads * 3) + ($totalDeals * 10) + ($commissionToday > 0 ? 2 : 0);
-        $cappedResults = min(15, $resultsPoints);
-
-        $totalScore = $cappedSubconscious + $cappedConscious + $cappedResults;
-        $totalScore = min(100, $totalScore);
 
         // Update or Create Metric
         $metric = PerformanceMetric::updateOrCreate(
             ['user_id' => $user->id, 'date' => $dateStr],
             [
                 'subconscious_score' => $cappedSubconscious,
-                'conscious_score' => $cappedConscious,
-                'results_score' => $cappedResults,
-                'total_momentum_score' => $totalScore,
-                'leads_generated' => $totalLeads,
-                'deals_closed' => $totalDeals,
+                'conscious_score' => $cappedRevenuePoints,
+                'results_score' => $consistencyScore,
+                'total_momentum_score' => $revenueMomentumScore,
+                'leads_generated' => $leadsFromResults,
+                'deals_closed' => $dealsFromResults,
                 'commission_earned' => $commissionToday,
-                'streak_count' => $user->current_streak
+                'streak_count' => $user->current_streak,
+                'metadata' => [
+                    'daily_revenue_points' => $cappedRevenuePoints,
+                    'raw_revenue_points' => $revenuePoints,
+                    'revenue_action_count' => $revenueActionCount,
+                    'subconscious_activity_count' => $subconsciousCount,
+                    'revenue_momentum_score' => $revenueMomentumScore,
+                    'consistency_index' => $consistencyScore,
+                    'weekly_performance_score' => $weeklyPerformanceScore,
+                    'leaderboard_score' => $leaderboardScore,
+                    'is_active_day' => $isActiveDay,
+                ],
             ]
         );
 
@@ -80,34 +104,26 @@ class PerformanceService
         $today = Carbon::today();
         $yesterday = Carbon::yesterday();
 
-        $todayMetric = PerformanceMetric::where('user_id', $user->id)
-            ->where('date', $today->toDateString())
-            ->first();
-
-        // Minimum requirement for streak: 
-        // Subconscious >= 14 (approx 2 activities of ~7 points)
-        // Conscious >= 24 (approx 4 activities of ~6 points)
-        // Actually the doc says "Minimum Mandatory: 2 Subconscious, 4 Conscious"
-        
         $subCount = Activity::where('user_id', $user->id)
             ->whereDate('completed_at', $today->toDateString())
             ->where('is_completed', true)
             ->where('category', 'subconscious')
             ->count();
 
-        $conCount = Activity::where('user_id', $user->id)
+        $revenueCount = Activity::where('user_id', $user->id)
             ->whereDate('completed_at', $today->toDateString())
             ->where('is_completed', true)
-            ->whereIn('category', ['task', 'conscious'])
+            ->whereIn('category', ['task', 'conscious', 'revenue'])
             ->count();
 
-        if ($subCount >= 2 && $conCount >= 4) {
+        if ($subCount >= 2 && $revenueCount >= 3) {
             if ($user->last_activity_date != $today->toDateString()) {
                 if ($user->last_activity_date == $yesterday->toDateString()) {
                     $user->current_streak += 1;
                 } else {
                     $user->current_streak = 1;
                 }
+                $user->longest_streak = max($user->longest_streak ?? 0, $user->current_streak);
                 $user->last_activity_date = $today->toDateString();
                 $user->save();
             }
@@ -118,8 +134,9 @@ class PerformanceService
 
     public function getActivityPoints($type)
     {
-        // Try to find in DB first
-        $activityType = \App\Models\ActivityType::where('type_key', $type)
+        $normalizedType = strtolower((string) $type);
+
+        $activityType = \App\Models\ActivityType::where('type_key', $normalizedType)
             ->orWhere('name', $type)
             ->first();
 
@@ -127,34 +144,32 @@ class PerformanceService
             return $activityType->points;
         }
 
-        // Fallback for legacy/hardcoded types if not in DB
         $points = [
-            // Identity Conditioning (Min 2, Max 40)
-            'journaling' => 4,
-            'webinar' => 12,
-            'visualization' => 10,
-            'affirmations' => 8,
-            'inner_game_audio' => 8,
-            'guided_reset' => 6,
-            
-            // Conscious
-            'coldCalling' => 8,
-            'contentCreation' => 8,
-            'contentPosting' => 6,
-            'dmConversation' => 6,
-            'whatsappBroadcast' => 6,
-            'email' => 6,
-            'meeting' => 10,
-            'prospecting' => 8,
-            'followUp' => 8,
-            'negotiation' => 10,
-            'servicing' => 6,
-            'crmUpdate' => 5,
-            'siteVisit' => 10,
-            'referralAsk' => 6,
-            'skillTraining' => 8,
+            'cold_calling_block' => 6,
+            'follow_up_block' => 8,
+            'client_meeting' => 12,
+            'site_visit' => 15,
+            'content_creation' => 4,
+            'content_posting' => 3,
+            'prospecting_session' => 7,
+            'deal_negotiation' => 18,
+            'crm_update' => 2,
+            'referral_ask' => 6,
+            'deal_closed' => 40,
+            'network_event' => 10,
+            'proposal_sent' => 14,
+            'visualization' => 8,
+            'affirmations' => 6,
+            'gratitude_journaling' => 6,
+            'mindset_training' => 8,
+            'audio_reprogramming' => 6,
+            'webinar_attendance' => 10,
+            'belief_exercise' => 8,
+            'calm_reset' => 5,
+            'identity_statement' => 5,
+            'morning_focus_ritual' => 6,
         ];
 
-        return $points[$type] ?? 0;
+        return $points[$normalizedType] ?? 0;
     }
 }
