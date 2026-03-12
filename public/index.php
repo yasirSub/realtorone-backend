@@ -5,12 +5,12 @@ use Illuminate\Http\Request;
 
 define('LARAVEL_START', microtime(true));
 
-// Increase upload limits for video uploads
-ini_set('upload_max_filesize', '512M');
-ini_set('post_max_size', '512M');
-ini_set('memory_limit', '512M');
-ini_set('max_execution_time', '300');
-ini_set('max_input_time', '300');
+// Keep bootstrap upload limits aligned with the controller validation and php.ini.
+ini_set('upload_max_filesize', '1024M');
+ini_set('post_max_size', '1024M');
+ini_set('memory_limit', '1024M');
+ini_set('max_execution_time', '1800');
+ini_set('max_input_time', '1800');
 
 
 // Determine if the application is in maintenance mode...
