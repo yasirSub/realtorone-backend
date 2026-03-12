@@ -53,7 +53,11 @@ class CourseController extends Controller
             'modules.lessons' => function ($query) {
                 $query->orderBy('sequence');
             },
-            'modules.lessons.materials'
+            'modules.lessons.materials' => function ($query) {
+                $query
+                    ->orderByRaw("CASE WHEN LOWER(type) = 'video' THEN 0 WHEN LOWER(type) = 'pdf' THEN 1 ELSE 2 END")
+                    ->orderBy('id');
+            }
         ])->findOrFail($id);
 
         return response()->json(['success' => true, 'data' => $course]);

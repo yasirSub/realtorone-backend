@@ -500,7 +500,13 @@ Route::get('/courses/{id}', function (Request $request, $id) {
     $user = getAuthUser($request);
     if (!$user) return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
 
-    $course = \App\Models\Course::with(['modules.lessons.materials'])->findOrFail($id);
+    $course = \App\Models\Course::with([
+        'modules.lessons.materials' => function ($query) {
+            $query
+                ->orderByRaw("CASE WHEN LOWER(type) = 'video' THEN 0 WHEN LOWER(type) = 'pdf' THEN 1 ELSE 2 END")
+                ->orderBy('id');
+        }
+    ])->findOrFail($id);
     
     // Check if user has access to this course
     $sub = \App\Models\UserSubscription::with('package')
