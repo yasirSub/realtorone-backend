@@ -168,21 +168,21 @@ class DatabaseSeeder extends Seeder
         // Seed Activity Types from Master Document
         $activityTypes = [
             // --- SUBCONSCIOUS ---
-            ['name' => 'Visualization', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'visualization', 'icon' => 'Eye', 'min_tier' => 'Consultant'],
-            ['name' => 'Affirmations', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'affirmations', 'icon' => 'Repeat', 'min_tier' => 'Consultant'],
-            ['name' => 'Audio Reprogramming', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'audio_reprogramming', 'icon' => 'Headphones', 'min_tier' => 'Rainmaker'],
-            ['name' => 'Belief Exercise', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'belief_exercise', 'icon' => 'BookOpen', 'min_tier' => 'Titan'],
-            ['name' => 'Identity Statement', 'points' => 5, 'category' => 'subconscious', 'type_key' => 'identity_statement', 'icon' => 'Shield', 'min_tier' => 'Titan'],
+            ['name' => 'Visualization', 'points' => 8, 'category' => 'subconscious', 'section_title' => 'Mindset & Inner Strength', 'section_order' => 1, 'item_order' => 1, 'type_key' => 'visualization', 'icon' => 'Eye', 'min_tier' => 'Consultant'],
+            ['name' => 'Affirmations', 'points' => 6, 'category' => 'subconscious', 'section_title' => 'Mindset & Inner Strength', 'section_order' => 1, 'item_order' => 2, 'type_key' => 'affirmations', 'icon' => 'Repeat', 'min_tier' => 'Consultant'],
+            ['name' => 'Audio Reprogramming', 'points' => 6, 'category' => 'subconscious', 'section_title' => 'Subconscious Reprogramming', 'section_order' => 3, 'item_order' => 1, 'type_key' => 'audio_reprogramming', 'icon' => 'Headphones', 'min_tier' => 'Rainmaker'],
+            ['name' => 'Belief Exercise', 'points' => 8, 'category' => 'subconscious', 'section_title' => 'Mindset & Inner Strength', 'section_order' => 1, 'item_order' => 3, 'type_key' => 'belief_exercise', 'icon' => 'BookOpen', 'min_tier' => 'Titan'],
+            ['name' => 'Identity Statement', 'points' => 5, 'category' => 'subconscious', 'section_title' => 'Mindset & Inner Strength', 'section_order' => 1, 'item_order' => 4, 'type_key' => 'identity_statement', 'icon' => 'Shield', 'min_tier' => 'Titan'],
             
             // --- CONSCIOUS ---
-            ['name' => 'Cold Calling', 'points' => 8, 'category' => 'conscious', 'type_key' => 'cold_calling', 'icon' => 'Phone', 'min_tier' => 'Consultant'],
-            ['name' => 'Content Creation', 'points' => 8, 'category' => 'conscious', 'type_key' => 'content_creation', 'icon' => 'Video', 'min_tier' => 'Consultant'],
-            ['name' => 'DM Conversations', 'points' => 6, 'category' => 'conscious', 'type_key' => 'dm_convos', 'icon' => 'MessageSquare', 'min_tier' => 'Rainmaker'],
-            ['name' => 'Client Meetings', 'points' => 10, 'category' => 'conscious', 'type_key' => 'client_meetings', 'icon' => 'Users', 'min_tier' => 'Rainmaker'],
-            ['name' => 'Deal Negotiation', 'points' => 10, 'category' => 'conscious', 'type_key' => 'negotiation', 'icon' => 'Gavel', 'min_tier' => 'Titan'],
-            ['name' => 'CRM Update', 'points' => 5, 'category' => 'conscious', 'type_key' => 'crm_update', 'icon' => 'Database', 'min_tier' => 'Consultant'],
-            ['name' => 'Site Visits', 'points' => 10, 'category' => 'conscious', 'type_key' => 'site_visits', 'icon' => 'MapPin', 'min_tier' => 'Titan'],
-            ['name' => 'Luxury Outreach', 'points' => 15, 'category' => 'conscious', 'type_key' => 'luxury_outreach', 'icon' => 'Star', 'min_tier' => 'Titan'],
+            ['name' => 'Cold Calling', 'points' => 8, 'category' => 'conscious', 'section_title' => 'Lead Generation', 'section_order' => 1, 'item_order' => 1, 'type_key' => 'cold_calling', 'icon' => 'Phone', 'min_tier' => 'Consultant'],
+            ['name' => 'Content Creation', 'points' => 8, 'category' => 'conscious', 'section_title' => 'Brand & Visibility', 'section_order' => 3, 'item_order' => 1, 'type_key' => 'content_creation', 'icon' => 'Video', 'min_tier' => 'Consultant'],
+            ['name' => 'DM Conversations', 'points' => 6, 'category' => 'conscious', 'section_title' => 'Lead Generation', 'section_order' => 1, 'item_order' => 2, 'type_key' => 'dm_convos', 'icon' => 'MessageSquare', 'min_tier' => 'Rainmaker'],
+            ['name' => 'Client Meetings', 'points' => 10, 'category' => 'conscious', 'section_title' => 'Client Conversion', 'section_order' => 2, 'item_order' => 1, 'type_key' => 'client_meetings', 'icon' => 'Users', 'min_tier' => 'Rainmaker'],
+            ['name' => 'Deal Negotiation', 'points' => 10, 'category' => 'conscious', 'section_title' => 'Client Conversion', 'section_order' => 2, 'item_order' => 2, 'type_key' => 'negotiation', 'icon' => 'Gavel', 'min_tier' => 'Titan'],
+            ['name' => 'CRM Update', 'points' => 5, 'category' => 'conscious', 'section_title' => 'Operations & Pipeline', 'section_order' => 4, 'item_order' => 1, 'type_key' => 'crm_update', 'icon' => 'Database', 'min_tier' => 'Consultant'],
+            ['name' => 'Site Visits', 'points' => 10, 'category' => 'conscious', 'section_title' => 'Client Conversion', 'section_order' => 2, 'item_order' => 3, 'type_key' => 'site_visits', 'icon' => 'MapPin', 'min_tier' => 'Titan'],
+            ['name' => 'Luxury Outreach', 'points' => 15, 'category' => 'conscious', 'section_title' => 'Lead Generation', 'section_order' => 1, 'item_order' => 3, 'type_key' => 'luxury_outreach', 'icon' => 'Star', 'min_tier' => 'Titan'],
         ];
 
         foreach ($activityTypes as $at) {

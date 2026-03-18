@@ -12,8 +12,12 @@ class ActivityType extends Model
     protected $fillable = [
         'name',
         'description',
+        'script_idea',
         'type_key',
         'category',
+        'section_title',
+        'section_order',
+        'item_order',
         'points',
         'is_global',
         'min_tier',
@@ -24,6 +28,8 @@ class ActivityType extends Model
     protected $casts = [
         'points' => 'integer',
         'is_global' => 'boolean',
+        'section_order' => 'integer',
+        'item_order' => 'integer',
     ];
 
     public function user()

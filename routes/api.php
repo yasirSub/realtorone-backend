@@ -31,30 +31,30 @@ function seedDefaultActivityTypes() {
     \App\Models\ActivityType::where('category', 'subconscious')->whereNotIn('type_key', $identityKeys)->delete();
 
     $types = [
-        ['name' => 'Visualization', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'visualization', 'icon' => 'Eye'],
-        ['name' => 'Affirmations', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'affirmations', 'icon' => 'Repeat'],
-        ['name' => 'Gratitude Journaling', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'gratitude_journaling', 'icon' => 'BookHeart'],
-        ['name' => 'Mindset Training', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'mindset_training', 'icon' => 'Brain'],
-        ['name' => 'Audio Reprogramming', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'audio_reprogramming', 'icon' => 'Headphones'],
-        ['name' => 'Webinar Attendance', 'points' => 10, 'category' => 'subconscious', 'type_key' => 'webinar_attendance', 'icon' => 'Video'],
-        ['name' => 'Belief Exercise', 'points' => 8, 'category' => 'subconscious', 'type_key' => 'belief_exercise', 'icon' => 'BookOpen'],
-        ['name' => 'Calm Reset', 'points' => 5, 'category' => 'subconscious', 'type_key' => 'calm_reset', 'icon' => 'Wind'],
-        ['name' => 'Identity Statement', 'points' => 5, 'category' => 'subconscious', 'type_key' => 'identity_statement', 'icon' => 'ShieldCheck'],
-        ['name' => 'Morning Focus Ritual', 'points' => 6, 'category' => 'subconscious', 'type_key' => 'morning_focus_ritual', 'icon' => 'Sunrise'],
+        ['name' => 'Visualization', 'points' => 8, 'category' => 'subconscious', 'section_title' => 'Mindset & Inner Strength', 'section_order' => 1, 'item_order' => 1, 'type_key' => 'visualization', 'icon' => 'Eye'],
+        ['name' => 'Affirmations', 'points' => 6, 'category' => 'subconscious', 'section_title' => 'Mindset & Inner Strength', 'section_order' => 1, 'item_order' => 2, 'type_key' => 'affirmations', 'icon' => 'Repeat'],
+        ['name' => 'Belief Exercise', 'points' => 8, 'category' => 'subconscious', 'section_title' => 'Mindset & Inner Strength', 'section_order' => 1, 'item_order' => 3, 'type_key' => 'belief_exercise', 'icon' => 'BookOpen'],
+        ['name' => 'Identity Statement', 'points' => 5, 'category' => 'subconscious', 'section_title' => 'Mindset & Inner Strength', 'section_order' => 1, 'item_order' => 4, 'type_key' => 'identity_statement', 'icon' => 'ShieldCheck'],
+        ['name' => 'Gratitude Journaling', 'points' => 6, 'category' => 'subconscious', 'section_title' => 'Mindset & Inner Strength', 'section_order' => 1, 'item_order' => 5, 'type_key' => 'gratitude_journaling', 'icon' => 'BookHeart'],
+        ['name' => 'Calm Reset', 'points' => 5, 'category' => 'subconscious', 'section_title' => 'Mindset & Inner Strength', 'section_order' => 1, 'item_order' => 6, 'type_key' => 'calm_reset', 'icon' => 'Wind'],
+        ['name' => 'Audio Reprogramming', 'points' => 6, 'category' => 'subconscious', 'section_title' => 'Mindset & Inner Strength', 'section_order' => 1, 'item_order' => 7, 'type_key' => 'audio_reprogramming', 'icon' => 'Headphones'],
+        ['name' => 'Morning Focus Ritual', 'points' => 6, 'category' => 'subconscious', 'section_title' => 'Growth & Daily Performance', 'section_order' => 2, 'item_order' => 1, 'type_key' => 'morning_focus_ritual', 'icon' => 'Sunrise'],
+        ['name' => 'Mindset Training', 'points' => 8, 'category' => 'subconscious', 'section_title' => 'Growth & Daily Performance', 'section_order' => 2, 'item_order' => 2, 'type_key' => 'mindset_training', 'icon' => 'Brain'],
+        ['name' => 'Webinar Attendance', 'points' => 10, 'category' => 'subconscious', 'section_title' => 'Growth & Daily Performance', 'section_order' => 2, 'item_order' => 3, 'type_key' => 'webinar_attendance', 'icon' => 'Video'],
 
-        ['name' => 'Cold Calling Block', 'points' => 6, 'category' => 'conscious', 'type_key' => 'cold_calling_block', 'icon' => 'Phone'],
-        ['name' => 'Follow-Up Block', 'points' => 8, 'category' => 'conscious', 'type_key' => 'follow_up_block', 'icon' => 'RefreshCw'],
-        ['name' => 'Client Meeting', 'points' => 12, 'category' => 'conscious', 'type_key' => 'client_meeting', 'icon' => 'Users'],
-        ['name' => 'Site Visit', 'points' => 15, 'category' => 'conscious', 'type_key' => 'site_visit', 'icon' => 'MapPin'],
-        ['name' => 'Content Creation', 'points' => 4, 'category' => 'conscious', 'type_key' => 'content_creation', 'icon' => 'Camera'],
-        ['name' => 'Content Posting', 'points' => 3, 'category' => 'conscious', 'type_key' => 'content_posting', 'icon' => 'Share2'],
-        ['name' => 'Prospecting Session', 'points' => 7, 'category' => 'conscious', 'type_key' => 'prospecting_session', 'icon' => 'Search'],
-        ['name' => 'Deal Negotiation', 'points' => 18, 'category' => 'conscious', 'type_key' => 'deal_negotiation', 'icon' => 'Briefcase'],
-        ['name' => 'CRM Update', 'points' => 2, 'category' => 'conscious', 'type_key' => 'crm_update', 'icon' => 'Database'],
-        ['name' => 'Referral Ask', 'points' => 6, 'category' => 'conscious', 'type_key' => 'referral_ask', 'icon' => 'UserPlus'],
-        ['name' => 'Deal Closed', 'points' => 40, 'category' => 'conscious', 'type_key' => 'deal_closed', 'icon' => 'BadgeDollarSign'],
-        ['name' => 'Network Event', 'points' => 10, 'category' => 'conscious', 'type_key' => 'network_event', 'icon' => 'Network'],
-        ['name' => 'Proposal Sent', 'points' => 14, 'category' => 'conscious', 'type_key' => 'proposal_sent', 'icon' => 'FileText'],
+        ['name' => 'Cold Calling Block', 'points' => 6, 'category' => 'conscious', 'section_title' => 'Lead Generation', 'section_order' => 1, 'item_order' => 1, 'type_key' => 'cold_calling_block', 'icon' => 'Phone'],
+        ['name' => 'Follow-Up Block', 'points' => 8, 'category' => 'conscious', 'section_title' => 'Lead Generation', 'section_order' => 1, 'item_order' => 2, 'type_key' => 'follow_up_block', 'icon' => 'RefreshCw'],
+        ['name' => 'Prospecting Session', 'points' => 7, 'category' => 'conscious', 'section_title' => 'Lead Generation', 'section_order' => 1, 'item_order' => 3, 'type_key' => 'prospecting_session', 'icon' => 'Search'],
+        ['name' => 'Referral Ask', 'points' => 6, 'category' => 'conscious', 'section_title' => 'Lead Generation', 'section_order' => 1, 'item_order' => 4, 'type_key' => 'referral_ask', 'icon' => 'UserPlus'],
+        ['name' => 'Network Event', 'points' => 10, 'category' => 'conscious', 'section_title' => 'Lead Generation', 'section_order' => 1, 'item_order' => 5, 'type_key' => 'network_event', 'icon' => 'Network'],
+        ['name' => 'Client Meeting', 'points' => 12, 'category' => 'conscious', 'section_title' => 'Client Conversion', 'section_order' => 2, 'item_order' => 1, 'type_key' => 'client_meeting', 'icon' => 'Users'],
+        ['name' => 'Site Visit', 'points' => 15, 'category' => 'conscious', 'section_title' => 'Client Conversion', 'section_order' => 2, 'item_order' => 2, 'type_key' => 'site_visit', 'icon' => 'MapPin'],
+        ['name' => 'Deal Negotiation', 'points' => 18, 'category' => 'conscious', 'section_title' => 'Client Conversion', 'section_order' => 2, 'item_order' => 3, 'type_key' => 'deal_negotiation', 'icon' => 'Briefcase'],
+        ['name' => 'Proposal Sent', 'points' => 14, 'category' => 'conscious', 'section_title' => 'Client Conversion', 'section_order' => 2, 'item_order' => 4, 'type_key' => 'proposal_sent', 'icon' => 'FileText'],
+        ['name' => 'Deal Closed', 'points' => 40, 'category' => 'conscious', 'section_title' => 'Client Conversion', 'section_order' => 2, 'item_order' => 5, 'type_key' => 'deal_closed', 'icon' => 'BadgeDollarSign'],
+        ['name' => 'Content Creation', 'points' => 4, 'category' => 'conscious', 'section_title' => 'Brand & Visibility', 'section_order' => 3, 'item_order' => 1, 'type_key' => 'content_creation', 'icon' => 'Camera'],
+        ['name' => 'Content Posting', 'points' => 3, 'category' => 'conscious', 'section_title' => 'Brand & Visibility', 'section_order' => 3, 'item_order' => 2, 'type_key' => 'content_posting', 'icon' => 'Share2'],
+        ['name' => 'CRM Update', 'points' => 2, 'category' => 'conscious', 'section_title' => 'Operations & Pipeline', 'section_order' => 4, 'item_order' => 1, 'type_key' => 'crm_update', 'icon' => 'Database'],
     ];
 
     foreach ($types as $type) {
@@ -1214,7 +1214,11 @@ Route::get('/admin/momentum-leaders', function () {
 });
 
 Route::get('/activity-types', function (Request $request) {
-    seedDefaultActivityTypes();
+    // Seed defaults only for first-time empty environments.
+    // Do not reseed on every request; otherwise admin deletions reappear.
+    if (\App\Models\ActivityType::where('is_global', true)->count() === 0) {
+        seedDefaultActivityTypes();
+    }
 
     $user = getAuthUser($request);
 
@@ -1222,23 +1226,48 @@ Route::get('/activity-types', function (Request $request) {
     if ($user) {
         $query->orWhere('user_id', $user->id);
     }
-    $types = $query->orderBy('category')->orderBy('name')->get();
+    $types = $query
+        ->orderBy('category')
+        ->orderBy('section_order')
+        ->orderBy('item_order')
+        ->orderBy('name')
+        ->get();
 
-    // Identity Conditioning: append subcategory (manual | verified) for grouping in UI
-    $identitySubcategory = [
-        'journaling' => 'manual', 'webinar' => 'manual',
-        'visualization' => 'verified', 'affirmations' => 'verified',
-        'inner_game_audio' => 'verified', 'guided_reset' => 'verified',
-    ];
-    $data = $types->map(function ($t) use ($identitySubcategory) {
-        $arr = $t->toArray();
-        if ($t->category === 'subconscious' && isset($identitySubcategory[$t->type_key])) {
-            $arr['subcategory'] = $identitySubcategory[$t->type_key];
+    // Day-aware task content for app popup (falls back to day 1, then base fields).
+    $dayNumber = 1;
+    if ($user) {
+        $dayNumber = max(1, min(365, ((int) ($user->current_streak ?? 0)) + 1));
+    }
+
+    if ($types->isNotEmpty()) {
+        $typeIds = $types->pluck('id')->all();
+        $requestedDays = array_values(array_unique([$dayNumber, 1]));
+
+        $logs = DB::table('activity_type_daily_logs')
+            ->whereIn('activity_type_id', $typeIds)
+            ->whereIn('day_number', $requestedDays)
+            ->get();
+
+        $logMap = [];
+        foreach ($logs as $log) {
+            $logMap[$log->activity_type_id][$log->day_number] = $log;
         }
-        return $arr;
-    });
 
-    return response()->json(['success' => true, 'data' => $data]);
+        $types = $types->map(function ($type) use ($logMap, $dayNumber) {
+            $exact = $logMap[$type->id][$dayNumber] ?? null;
+            $fallbackDay1 = $logMap[$type->id][1] ?? null;
+            $selectedLog = $exact ?: $fallbackDay1;
+
+            $type->today_day_number = $dayNumber;
+            $type->task_description = $selectedLog->task_description ?? $type->description;
+            $type->video_reel_script_idea = $selectedLog->script_idea ?? $type->script_idea;
+            $type->daily_feedback = $selectedLog->feedback ?? null;
+            $type->has_daily_log = $selectedLog !== null;
+            return $type;
+        });
+    }
+
+    return response()->json(['success' => true, 'data' => $types]);
 });
 
 Route::post('/activity-types', function (Request $request) {
@@ -1251,6 +1280,10 @@ Route::post('/activity-types', function (Request $request) {
         'name' => 'required|string|max:255',
         'icon' => 'nullable|string',
         'description' => 'nullable|string',
+        'script_idea' => 'nullable|string',
+        'section_title' => 'nullable|string|max:255',
+        'section_order' => 'nullable|integer|min:0',
+        'item_order' => 'nullable|integer|min:0',
     ]);
     
     // Users can only create subconscious activities with admin-configurable points
@@ -1262,8 +1295,12 @@ Route::post('/activity-types', function (Request $request) {
         'type_key' => Str::slug($data['name'], '_'),
         'icon' => $data['icon'] ?? 'Activity',
         'description' => $data['description'] ?? '',
+        'script_idea' => $data['script_idea'] ?? '',
         'user_id' => $user->id,
         'is_global' => false,
+        'section_title' => $data['section_title'] ?? 'Custom Activities',
+        'section_order' => $data['section_order'] ?? 99,
+        'item_order' => $data['item_order'] ?? 0,
     ]);
     
     return response()->json(['success' => true, 'data' => $activityType]);
@@ -1275,7 +1312,12 @@ Route::post('/admin/activity-types', function (Request $request) {
         'points' => 'required|integer|min:1',
         'category' => 'required|in:conscious,subconscious',
         'icon' => 'nullable|string',
+        'description' => 'nullable|string',
+        'script_idea' => 'nullable|string',
         'min_tier' => 'nullable|string',
+        'section_title' => 'nullable|string|max:255',
+        'section_order' => 'nullable|integer|min:0',
+        'item_order' => 'nullable|integer|min:0',
     ]);
 
     $activityType = \App\Models\ActivityType::create([
@@ -1284,8 +1326,13 @@ Route::post('/admin/activity-types', function (Request $request) {
         'category' => $data['category'],
         'type_key' => Str::slug($data['name'], '_'),
         'icon' => $data['icon'] ?? 'Activity',
+        'description' => $data['description'] ?? '',
+        'script_idea' => $data['script_idea'] ?? '',
         'is_global' => true,
         'min_tier' => $data['min_tier'] ?? 'Consultant',
+        'section_title' => $data['section_title'] ?? ($data['category'] === 'subconscious' ? 'Day 1' : 'Conscious'),
+        'section_order' => $data['section_order'] ?? 0,
+        'item_order' => $data['item_order'] ?? 0,
     ]);
 
     return response()->json(['success' => true, 'data' => $activityType]);
@@ -1299,7 +1346,12 @@ Route::put('/admin/activity-types/{id}', function (Request $request, $id) {
         'points' => 'sometimes|integer|min:1',
         'category' => 'sometimes|in:conscious,subconscious',
         'icon' => 'nullable|string',
+        'description' => 'nullable|string',
+        'script_idea' => 'nullable|string',
         'min_tier' => 'nullable|string',
+        'section_title' => 'nullable|string|max:255',
+        'section_order' => 'sometimes|integer|min:0',
+        'item_order' => 'sometimes|integer|min:0',
     ]);
     
     $activityType->update($data);
@@ -1308,6 +1360,134 @@ Route::put('/admin/activity-types/{id}', function (Request $request, $id) {
     }
     
     return response()->json(['success' => true, 'data' => $activityType->fresh()]);
+});
+
+Route::post('/admin/activity-types/group-update', function (Request $request) {
+    $data = $request->validate([
+        'category' => 'required|in:conscious,subconscious',
+        'current_section_title' => 'required|string|max:255',
+        'section_title' => 'required|string|max:255',
+        'section_order' => 'required|integer|min:0',
+    ]);
+
+    $query = \App\Models\ActivityType::where('category', $data['category'])
+        ->where('section_title', $data['current_section_title']);
+
+    $query->update([
+        'section_title' => $data['section_title'],
+        'section_order' => $data['section_order'],
+    ]);
+
+    $updated = \App\Models\ActivityType::where('category', $data['category'])
+        ->where('section_title', $data['section_title'])
+        ->orderBy('item_order')
+        ->orderBy('name')
+        ->get();
+
+    return response()->json([
+        'success' => true,
+        'data' => $updated,
+    ]);
+});
+
+Route::get('/admin/activity-types/{id}/daily-logs', function (Request $request, $id) {
+    $activityType = \App\Models\ActivityType::findOrFail($id);
+
+    $data = $request->validate([
+        'from_day' => 'nullable|integer|min:1|max:365',
+        'to_day' => 'nullable|integer|min:1|max:365',
+    ]);
+
+    $fromDay = $data['from_day'] ?? 1;
+    $toDay = $data['to_day'] ?? 60;
+    if ($toDay < $fromDay) {
+        [$fromDay, $toDay] = [$toDay, $fromDay];
+    }
+
+    $logs = DB::table('activity_type_daily_logs')
+        ->where('activity_type_id', $activityType->id)
+        ->whereBetween('day_number', [$fromDay, $toDay])
+        ->orderBy('day_number')
+        ->get();
+
+    return response()->json([
+        'success' => true,
+        'data' => $logs,
+    ]);
+});
+
+Route::put('/admin/activity-types/{id}/daily-logs/{day}', function (Request $request, $id, $day) {
+    $activityType = \App\Models\ActivityType::findOrFail($id);
+    $dayNumber = (int) $day;
+    if ($dayNumber < 1 || $dayNumber > 365) {
+        return response()->json(['success' => false, 'message' => 'Invalid day number'], 422);
+    }
+
+    $data = $request->validate([
+        'task_description' => 'nullable|string',
+        'script_idea' => 'nullable|string',
+        'feedback' => 'nullable|string',
+    ]);
+
+    DB::table('activity_type_daily_logs')->updateOrInsert(
+        [
+            'activity_type_id' => $activityType->id,
+            'day_number' => $dayNumber,
+        ],
+        [
+            'task_description' => $data['task_description'] ?? null,
+            'script_idea' => $data['script_idea'] ?? null,
+            'feedback' => $data['feedback'] ?? null,
+            'updated_at' => now(),
+            'created_at' => now(),
+        ]
+    );
+
+    $saved = DB::table('activity_type_daily_logs')
+        ->where('activity_type_id', $activityType->id)
+        ->where('day_number', $dayNumber)
+        ->first();
+
+    return response()->json([
+        'success' => true,
+        'data' => $saved,
+    ]);
+});
+
+Route::post('/admin/activity-types/{id}/daily-logs/bulk', function (Request $request, $id) {
+    $activityType = \App\Models\ActivityType::findOrFail($id);
+
+    $data = $request->validate([
+        'entries' => 'required|array|min:1',
+        'entries.*.day_number' => 'required|integer|min:1|max:365',
+        'entries.*.task_description' => 'nullable|string',
+        'entries.*.script_idea' => 'nullable|string',
+        'entries.*.feedback' => 'nullable|string',
+    ]);
+
+    $now = now();
+    $rows = array_map(function ($entry) use ($activityType, $now) {
+        return [
+            'activity_type_id' => $activityType->id,
+            'day_number' => (int) $entry['day_number'],
+            'task_description' => $entry['task_description'] ?? null,
+            'script_idea' => $entry['script_idea'] ?? null,
+            'feedback' => $entry['feedback'] ?? null,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ];
+    }, $data['entries']);
+
+    DB::table('activity_type_daily_logs')->upsert(
+        $rows,
+        ['activity_type_id', 'day_number'],
+        ['task_description', 'script_idea', 'feedback', 'updated_at']
+    );
+
+    return response()->json([
+        'success' => true,
+        'count' => count($rows),
+    ]);
 });
 
 Route::delete('/admin/activity-types/{id}', function ($id) {

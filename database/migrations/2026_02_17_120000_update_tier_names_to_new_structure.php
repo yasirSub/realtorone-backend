@@ -78,8 +78,9 @@ return new class extends Migration
                 ->orWhere('min_tier', 'Titan-GOLD')
                 ->update(['min_tier' => 'Titan']);
 
-            // For MySQL/PostgreSQL, alter the enum after data is compatible.
-            DB::statement("ALTER TABLE courses MODIFY COLUMN min_tier ENUM('Consultant', 'Rainmaker', 'Titan') DEFAULT 'Consultant'");
+            // For MySQL/PostgreSQL, keep a superset enum so legacy "Free"
+            // values inserted by older seeders or manual data are still valid.
+            DB::statement("ALTER TABLE courses MODIFY COLUMN min_tier ENUM('Free', 'Consultant', 'Rainmaker', 'Titan') DEFAULT 'Consultant'");
         }
 
         // Update users table - membership_tier
