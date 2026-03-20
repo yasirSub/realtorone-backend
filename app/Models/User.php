@@ -46,6 +46,8 @@ class User extends Authenticatable
         'current_streak',
         'longest_streak',
         'last_activity_date',
+        // Day 1..7 hybrid streak/progress program
+        'program_current_day',
         // Premium status
         'is_premium',
         'premium_expires_at',
@@ -87,6 +89,7 @@ class User extends Authenticatable
             'mindset_index' => 'integer',
             'current_streak' => 'integer',
             'longest_streak' => 'integer',
+            'program_current_day' => 'integer',
         ];
     }
 }

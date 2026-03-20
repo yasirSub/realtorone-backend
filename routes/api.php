@@ -1113,18 +1113,48 @@ Route::post('/subscriptions/purchase', function (Request $request) {
     $package = \App\Models\SubscriptionPackage::findOrFail($data['package_id']);
     
     // Calculate amount
-    $amount = $package->price_monthly * $data['months'];
+    $months = (int) $data['months'];
+
+    // Match the mobile UI duration discounts:
+    // - 1 month: no discount
+    // - 6 monthly: 10% off (base monthly * 6 * 0.9)
+    // - 1 yearly: 20% off (base monthly * 12 * 0.8)
+    $durationDiscountFactor = 1.0;
+    if ($months === 6) {
+        $durationDiscountFactor = 0.9;
+    } elseif ($months === 12) {
+        $durationDiscountFactor = 0.8;
+    }
+
+    $amount = $package->price_monthly * $months * $durationDiscountFactor;
     if ($data['coupon_id']) {
         $coupon = \App\Models\Coupon::find($data['coupon_id']);
         $amount = $amount * (1 - ($coupon->discount_percentage / 100));
         $coupon->increment('used_count');
     }
 
+    // Renewal handling:
+    // If user already has an active subscription, extend from its current `expires_at`.
+    // Also deactivate the old active subscription to keep only one active record at a time.
+    $currentSub = \App\Models\UserSubscription::where('user_id', $user->id)
+        ->where('status', 'active')
+        ->where('expires_at', '>', now())
+        ->orderBy('expires_at', 'desc')
+        ->first();
+
+    $baseDate = $currentSub ? $currentSub->expires_at : now();
+    $expiresAt = \Carbon\Carbon::parse($baseDate)->addMonths($months);
+
+    if ($currentSub) {
+        $currentSub->status = 'cancelled';
+        $currentSub->save();
+    }
+
     $sub = \App\Models\UserSubscription::create([
         'user_id' => $user->id,
         'package_id' => $package->id,
         'started_at' => now(),
-        'expires_at' => now()->addMonths($data['months']),
+        'expires_at' => $expiresAt,
         'status' => 'active',
         'payment_method' => 'paypal',
         'payment_id' => $data['payment_id'],
@@ -1234,9 +1264,11 @@ Route::get('/activity-types', function (Request $request) {
         ->get();
 
     // Day-aware task content for app popup (falls back to day 1, then base fields).
+    // Uses the Day 1..7 hybrid program cycle (program_current_day), not current_streak.
     $dayNumber = 1;
     if ($user) {
-        $dayNumber = max(1, min(365, ((int) ($user->current_streak ?? 0)) + 1));
+        $dayNumber = (int) ($user->program_current_day ?? 1);
+        $dayNumber = max(1, min(7, $dayNumber));
     }
 
     if ($types->isNotEmpty()) {
@@ -1902,20 +1934,52 @@ Route::group(['middleware' => []], function () {
             'updated_at' => now(),
         ]);
 
-        // Update streak
-        $lastActivity = $user->last_activity_date;
+        // Hybrid streak + progress day (Day 1..7 cycle).
+        // Rules follow: first-time sets day=1 & streak=1; missing exactly 1 day increments both;
+        // missing more than 1 day resets streak but keeps progress day unchanged; same-day does nothing.
+        $lastActivity = $user->last_activity_date; // stored as date (no time)
         $today = now()->toDateString();
         $yesterday = now()->subDay()->toDateString();
+        $dayBeforeYesterday = now()->subDays(2)->toDateString();
 
-        if ($lastActivity === $yesterday || $lastActivity === null) {
-            $user->increment('current_streak');
-        } elseif ($lastActivity !== $today) {
-            $user->update(['current_streak' => 1]);
+        $programDay = (int) ($user->program_current_day ?? 1);
+        $newProgramDay = $programDay;
+        $newStreak = (int) ($user->current_streak ?? 0);
+
+        // Prevent double-advancing streak/day if user completes multiple activities on the same date.
+        $shouldAdvance = $lastActivity !== $today;
+
+        if ($lastActivity === null) {
+            // Step 2 (first time)
+            $newStreak = 1;
+            // Step 5 (move to next day in program)
+            $newProgramDay = $programDay >= 7 ? 1 : ($programDay + 1);
+        } elseif ($shouldAdvance) {
+            if ($lastActivity === $yesterday) {
+                // No gap: continue normal flow (streak +1, move to next program day)
+                $newStreak = $newStreak + 1;
+                $newProgramDay = $programDay >= 7 ? 1 : ($programDay + 1);
+            } elseif ($lastActivity === $dayBeforeYesterday) {
+                // Missed exactly 1 day: advance progress extra (+1) and streak (+1)
+                $newStreak = $newStreak + 1;
+
+                $workingDay = $programDay >= 7 ? 1 : ($programDay + 1); // Step 3 current_day + 1
+                $newProgramDay = $workingDay >= 7 ? 1 : ($workingDay + 1); // Step 5 next day in program
+            } else {
+                // Missed > 1 day: reset streak, keep progress day (then step 5 advances only once)
+                $newStreak = 1;
+                $newProgramDay = $programDay >= 7 ? 1 : ($programDay + 1);
+            }
         }
 
+        $newLongestStreak = max((int) ($user->longest_streak ?? 0), $newStreak);
+
         $user->update([
+            'current_streak' => $newStreak,
+            'longest_streak' => $newLongestStreak,
+            'program_current_day' => $newProgramDay,
             'last_activity_date' => $today,
-            'execution_rate' => min(100, $user->execution_rate + 2),
+            'execution_rate' => min(100, (int) ($user->execution_rate ?? 0) + 2),
         ]);
 
         // Recalculate daily score and award badges (keeps dashboard in sync)
@@ -1976,6 +2040,7 @@ Route::group(['middleware' => []], function () {
                 'subconscious_total' => $subconsciousTotal,
                 'subconscious_completed' => $subconsciousCompleted,
                 'current_streak' => $user->current_streak,
+                'program_current_day' => max(1, min(7, (int) ($user->program_current_day ?? 1))),
             ],
         ]);
     });
@@ -2010,7 +2075,44 @@ Route::group(['middleware' => []], function () {
             'notes' => $data['notes'] ?? null,
         ]);
 
-        $service->updateStreak($user);
+        // Keep streak/progress in sync with the hybrid Day 1..7 rules.
+        $lastActivity = $user->last_activity_date;
+        $today = now()->toDateString();
+        $yesterday = now()->subDay()->toDateString();
+        $dayBeforeYesterday = now()->subDays(2)->toDateString();
+
+        $programDay = (int) ($user->program_current_day ?? 1);
+        $newProgramDay = $programDay;
+        $newStreak = (int) ($user->current_streak ?? 0);
+        $shouldAdvance = $lastActivity !== $today;
+
+        if ($lastActivity === null) {
+            $newStreak = 1;
+            $newProgramDay = $programDay >= 7 ? 1 : ($programDay + 1);
+        } elseif ($shouldAdvance) {
+            if ($lastActivity === $yesterday) {
+                $newStreak = $newStreak + 1;
+                $newProgramDay = $programDay >= 7 ? 1 : ($programDay + 1);
+            } elseif ($lastActivity === $dayBeforeYesterday) {
+                $newStreak = $newStreak + 1;
+
+                $workingDay = $programDay >= 7 ? 1 : ($programDay + 1);
+                $newProgramDay = $workingDay >= 7 ? 1 : ($workingDay + 1);
+            } else {
+                $newStreak = 1;
+                $newProgramDay = $programDay >= 7 ? 1 : ($programDay + 1);
+            }
+        }
+
+        $newLongestStreak = max((int) ($user->longest_streak ?? 0), $newStreak);
+
+        $user->update([
+            'current_streak' => $newStreak,
+            'longest_streak' => $newLongestStreak,
+            'program_current_day' => $newProgramDay,
+            'last_activity_date' => $today,
+            'execution_rate' => min(100, (int) ($user->execution_rate ?? 0) + 2),
+        ]);
         $metric = $service->calculateDailyScore($user);
 
         // Check and award badges
