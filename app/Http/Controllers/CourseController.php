@@ -177,7 +177,7 @@ class CourseController extends Controller
     public function uploadFile(Request $request)
     {
         $request->validate([
-            'file' => 'required|file|max:1048576', // max 1GB for videos
+            'file' => 'required|file|max:52428800', // 50MB for audio/video
             'type' => 'required|string'
         ]);
 

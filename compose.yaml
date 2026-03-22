@@ -19,7 +19,9 @@ services:
             # generated links in Laravel still may.
             APP_URL: ${APP_URL:-http://localhost:8000}
             WAIT_FOR_DB: ${WAIT_FOR_DB:-1}
-            RUN_MIGRATIONS: ${RUN_MIGRATIONS:-0}
+            # Ensure schema changes get applied on deploy.
+            # Keeps production from breaking when code expects new columns.
+            RUN_MIGRATIONS: ${RUN_MIGRATIONS:-1}
             RUN_SEED: ${RUN_SEED:-0}
             DB_CONNECTION: mysql
             DB_HOST: mysql

@@ -9,3 +9,7 @@ storage/framework/sessions/*
 storage/framework/views/*
 storage/logs/*
 bootstrap/cache/*
+
+# Do not ship local DB dumps into Docker images.
+realtorone.sql
+database/database.sqlite

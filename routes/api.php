@@ -1294,6 +1294,7 @@ Route::get('/activity-types', function (Request $request) {
             $type->task_description = $selectedLog->task_description ?? $type->description;
             $type->video_reel_script_idea = $selectedLog->script_idea ?? $type->script_idea;
             $type->daily_feedback = $selectedLog->feedback ?? null;
+            $type->daily_audio_url = $selectedLog->audio_url ?? null;
             $type->has_daily_log = $selectedLog !== null;
             return $type;
         });
@@ -1459,6 +1460,7 @@ Route::put('/admin/activity-types/{id}/daily-logs/{day}', function (Request $req
         'task_description' => 'nullable|string',
         'script_idea' => 'nullable|string',
         'feedback' => 'nullable|string',
+        'audio_url' => 'nullable|string|max:2048',
     ]);
 
     DB::table('activity_type_daily_logs')->updateOrInsert(
@@ -1470,6 +1472,7 @@ Route::put('/admin/activity-types/{id}/daily-logs/{day}', function (Request $req
             'task_description' => $data['task_description'] ?? null,
             'script_idea' => $data['script_idea'] ?? null,
             'feedback' => $data['feedback'] ?? null,
+            'audio_url' => $data['audio_url'] ?? null,
             'updated_at' => now(),
             'created_at' => now(),
         ]
@@ -1495,6 +1498,7 @@ Route::post('/admin/activity-types/{id}/daily-logs/bulk', function (Request $req
         'entries.*.task_description' => 'nullable|string',
         'entries.*.script_idea' => 'nullable|string',
         'entries.*.feedback' => 'nullable|string',
+        'entries.*.audio_url' => 'nullable|string|max:2048',
     ]);
 
     $now = now();
@@ -1505,6 +1509,7 @@ Route::post('/admin/activity-types/{id}/daily-logs/bulk', function (Request $req
             'task_description' => $entry['task_description'] ?? null,
             'script_idea' => $entry['script_idea'] ?? null,
             'feedback' => $entry['feedback'] ?? null,
+            'audio_url' => $entry['audio_url'] ?? null,
             'created_at' => $now,
             'updated_at' => $now,
         ];
@@ -1513,7 +1518,7 @@ Route::post('/admin/activity-types/{id}/daily-logs/bulk', function (Request $req
     DB::table('activity_type_daily_logs')->upsert(
         $rows,
         ['activity_type_id', 'day_number'],
-        ['task_description', 'script_idea', 'feedback', 'updated_at']
+        ['task_description', 'script_idea', 'feedback', 'audio_url', 'updated_at']
     );
 
     return response()->json([
@@ -1935,40 +1940,37 @@ Route::group(['middleware' => []], function () {
         ]);
 
         // Hybrid streak + progress day (Day 1..7 cycle).
-        // Rules follow: first-time sets day=1 & streak=1; missing exactly 1 day increments both;
-        // missing more than 1 day resets streak but keeps progress day unchanged; same-day does nothing.
+        // Rules follow (from your corrections):
+        // - First time: streak=1 and program day advances.
+        // - Same-day YES: counted once; no further changes.
+        // - If active on previous day (no gap): streak += 1 and program day advances.
+        // - If not active on previous day (gap >= 1 day): streak resets to 1 and program day advances.
+        // - Program day never stays the same after a break: always advances to next day in 1..7.
         $lastActivity = $user->last_activity_date; // stored as date (no time)
         $today = now()->toDateString();
         $yesterday = now()->subDay()->toDateString();
-        $dayBeforeYesterday = now()->subDays(2)->toDateString();
 
         $programDay = (int) ($user->program_current_day ?? 1);
-        $newProgramDay = $programDay;
+        $newProgramDay = (int) ($user->program_current_day ?? 1);
         $newStreak = (int) ($user->current_streak ?? 0);
 
         // Prevent double-advancing streak/day if user completes multiple activities on the same date.
         $shouldAdvance = $lastActivity !== $today;
 
         if ($lastActivity === null) {
-            // Step 2 (first time)
+            // Step 2: first-time user
             $newStreak = 1;
-            // Step 5 (move to next day in program)
             $newProgramDay = $programDay >= 7 ? 1 : ($programDay + 1);
         } elseif ($shouldAdvance) {
-            if ($lastActivity === $yesterday) {
-                // No gap: continue normal flow (streak +1, move to next program day)
-                $newStreak = $newStreak + 1;
-                $newProgramDay = $programDay >= 7 ? 1 : ($programDay + 1);
-            } elseif ($lastActivity === $dayBeforeYesterday) {
-                // Missed exactly 1 day: advance progress extra (+1) and streak (+1)
-                $newStreak = $newStreak + 1;
+            // Same-day YES is ignored by $shouldAdvance; this ensures only first YES counts.
+            $newProgramDay = $programDay >= 7 ? 1 : ($programDay + 1); // always advance after a counted YES
 
-                $workingDay = $programDay >= 7 ? 1 : ($programDay + 1); // Step 3 current_day + 1
-                $newProgramDay = $workingDay >= 7 ? 1 : ($workingDay + 1); // Step 5 next day in program
+            if ($lastActivity === $yesterday) {
+                // No gap
+                $newStreak = $newStreak + 1;
             } else {
-                // Missed > 1 day: reset streak, keep progress day (then step 5 advances only once)
+                // Not active on previous day (gap >= 1 day)
                 $newStreak = 1;
-                $newProgramDay = $programDay >= 7 ? 1 : ($programDay + 1);
             }
         }
 
@@ -2079,10 +2081,9 @@ Route::group(['middleware' => []], function () {
         $lastActivity = $user->last_activity_date;
         $today = now()->toDateString();
         $yesterday = now()->subDay()->toDateString();
-        $dayBeforeYesterday = now()->subDays(2)->toDateString();
 
         $programDay = (int) ($user->program_current_day ?? 1);
-        $newProgramDay = $programDay;
+        $newProgramDay = (int) ($user->program_current_day ?? 1);
         $newStreak = (int) ($user->current_streak ?? 0);
         $shouldAdvance = $lastActivity !== $today;
 
@@ -2090,17 +2091,13 @@ Route::group(['middleware' => []], function () {
             $newStreak = 1;
             $newProgramDay = $programDay >= 7 ? 1 : ($programDay + 1);
         } elseif ($shouldAdvance) {
-            if ($lastActivity === $yesterday) {
-                $newStreak = $newStreak + 1;
-                $newProgramDay = $programDay >= 7 ? 1 : ($programDay + 1);
-            } elseif ($lastActivity === $dayBeforeYesterday) {
-                $newStreak = $newStreak + 1;
+            // Same-day YES is ignored by $shouldAdvance; only first YES counts.
+            $newProgramDay = $programDay >= 7 ? 1 : ($programDay + 1); // always advance after a counted YES
 
-                $workingDay = $programDay >= 7 ? 1 : ($programDay + 1);
-                $newProgramDay = $workingDay >= 7 ? 1 : ($workingDay + 1);
+            if ($lastActivity === $yesterday) {
+                $newStreak = $newStreak + 1; // active previous day => streak continues
             } else {
-                $newStreak = 1;
-                $newProgramDay = $programDay >= 7 ? 1 : ($programDay + 1);
+                $newStreak = 1; // not active on previous day => break => reset
             }
         }
 
