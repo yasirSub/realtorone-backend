@@ -36,7 +36,7 @@ class BackupController extends Controller
             // 1. Export Database if requested
             if ($includeDb) {
                 $command = sprintf(
-                    'mysqldump --no-tablespaces --host=%s --user=%s --password=%s %s > %s',
+                    'mysqldump --ssl-mode=DISABLED --no-tablespaces --host=%s --user=%s --password=%s %s > %s',
                     escapeshellarg($host),
                     escapeshellarg($username),
                     escapeshellarg($password),
@@ -128,7 +128,7 @@ class BackupController extends Controller
             $host = config('database.connections.mysql.host');
 
             $command = sprintf(
-                'mysql --host=%s --user=%s --password=%s %s < %s',
+                'mysql --ssl-mode=DISABLED --host=%s --user=%s --password=%s %s < %s',
                 escapeshellarg($host),
                 escapeshellarg($username),
                 escapeshellarg($password),
