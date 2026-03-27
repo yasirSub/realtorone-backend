@@ -8,7 +8,7 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('ai_course_knowledge_base', function (Blueprint $table) {
+        Schema::create('ai_course_knowledge_bases', function (Blueprint $table) {
             $table->id();
             $table->foreignId('course_id')->constrained()->onDelete('cascade');
             $table->string('tier'); // Consultant, Rainmaker, Titan
@@ -21,7 +21,7 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('ai_course_knowledge_base');
+        Schema::dropIfExists('ai_course_knowledge_bases');
     }
 };
 

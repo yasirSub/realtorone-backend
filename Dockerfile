@@ -5,6 +5,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
     git \
     unzip \
+    zip \
+    default-mysql-client \
     libzip-dev \
     libpng-dev \
     libonig-dev \

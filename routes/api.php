@@ -504,6 +504,8 @@ Route::delete('/admin/coupons/{id}', function ($id) {
 // Courses Management
 // Upload route MUST come before resource route to avoid 'upload' being matched as a course ID
 Route::post('admin/courses/upload', [\App\Http\Controllers\CourseController::class, 'uploadFile']);
+Route::get('admin/system/backup', [\App\Http\Controllers\BackupController::class, 'export']);
+Route::post('admin/system/restore', [\App\Http\Controllers\BackupController::class, 'import']);
 Route::resource('admin/courses', \App\Http\Controllers\CourseController::class);
 Route::post('admin/courses/{id}/modules', [\App\Http\Controllers\CourseController::class, 'storeModule']);
 Route::put('admin/modules/{id}', [\App\Http\Controllers\CourseController::class, 'updateModule']);
