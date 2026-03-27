@@ -11,14 +11,18 @@ class BackupController extends Controller
     /**
      * Generate and download a full backup (Database + Course Assets)
      */
-    public function export()
+    public function export(Request $request)
     {
+        $includeDb = $request->query('db', 1);
+        $includeMedia = $request->query('media', 1);
+
         $database = config('database.connections.mysql.database');
         $username = config('database.connections.mysql.username');
         $password = config('database.connections.mysql.password');
         $host = config('database.connections.mysql.host');
 
-        $backupName = 'realtorone_backup_' . date('Y-m-d_H-i-s') . '.zip';
+        $tag = ($includeDb && $includeMedia) ? 'full' : ($includeDb ? 'db' : ($includeMedia ? 'media' : 'partial'));
+        $backupName = 'realtorone_' . $tag . '_backup_' . date('Y-m-d_H-i-s') . '.zip';
         $tempDir = storage_path('app/temp_backup');
         
         if (!file_exists($tempDir)) {
@@ -29,30 +33,40 @@ class BackupController extends Controller
         $zipFile = storage_path('app/' . $backupName);
 
         try {
-            // 1. Export Database
-            // Use --no-tablespaces to avoid permission issues in some environments
-            $command = sprintf(
-                'mysqldump --no-tablespaces --host=%s --user=%s --password=%s %s > %s',
-                escapeshellarg($host),
-                escapeshellarg($username),
-                escapeshellarg($password),
-                escapeshellarg($database),
-                escapeshellarg($sqlFile)
-            );
-            
-            exec($command, $output, $returnVar);
-            if ($returnVar !== 0) {
-                throw new \Exception('Database dump failed. Make sure mysql-client is installed.');
+            // 1. Export Database if requested
+            if ($includeDb) {
+                $command = sprintf(
+                    'mysqldump --no-tablespaces --host=%s --user=%s --password=%s %s > %s',
+                    escapeshellarg($host),
+                    escapeshellarg($username),
+                    escapeshellarg($password),
+                    escapeshellarg($database),
+                    escapeshellarg($sqlFile)
+                );
+                
+                exec($command, $output, $returnVar);
+                if ($returnVar !== 0) {
+                    throw new \Exception('Database dump failed. Make sure mysql-client is installed.');
+                }
             }
 
-            // 2. Create ZIP with Database and Public Storage
-            $zipCommand = sprintf(
-                'cd %s && zip -r %s public && zip -j %s %s',
-                escapeshellarg(storage_path('app')),
-                escapeshellarg($zipFile),
-                escapeshellarg($zipFile),
-                escapeshellarg($sqlFile)
-            );
+            // 2. Create ZIP
+            // Start with an empty zip command
+            $zipArgs = [];
+            if ($includeMedia) {
+                // Add the public directory (media)
+                $zipArgs[] = 'zip -r ' . escapeshellarg($zipFile) . ' public';
+            }
+            if ($includeDb) {
+                // Add the SQL file
+                $zipArgs[] = 'zip -j ' . escapeshellarg($zipFile) . ' ' . escapeshellarg($sqlFile);
+            }
+
+            if (empty($zipArgs)) {
+                throw new \Exception('Nothing selected for backup.');
+            }
+
+            $zipCommand = 'cd ' . escapeshellarg(storage_path('app')) . ' && ' . implode(' && ', $zipArgs);
 
             exec($zipCommand, $output, $returnVar);
             if ($returnVar !== 0) {
@@ -60,8 +74,8 @@ class BackupController extends Controller
             }
 
             // 3. Clean up SQL file and temp dir
-            unlink($sqlFile);
-            rmdir($tempDir);
+            if (file_exists($sqlFile)) unlink($sqlFile);
+            if (is_dir($tempDir)) rmdir($tempDir);
 
             // 4. Return the file for download
             return response()->download($zipFile)->deleteFileAfterSend(true);
