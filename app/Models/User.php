@@ -4,6 +4,7 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
@@ -91,5 +92,10 @@ class User extends Authenticatable
             'longest_streak' => 'integer',
             'program_current_day' => 'integer',
         ];
+    }
+
+    public function pushTokens(): HasMany
+    {
+        return $this->hasMany(UserPushToken::class);
     }
 }

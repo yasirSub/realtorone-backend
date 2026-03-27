@@ -5,22 +5,21 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class ChatMessage extends Model
+class NotificationAutomationDedupe extends Model
 {
+    protected $table = 'notification_automation_dedupes';
+
     protected $fillable = [
-        'chat_session_id',
         'user_id',
-        'role',
-        'content',
-        'prompt_tokens',
-        'completion_tokens',
-        'total_tokens',
-        'model',
+        'rule_key',
+        'dedupe_date',
     ];
 
-    public function chatSession(): BelongsTo
+    protected function casts(): array
     {
-        return $this->belongsTo(ChatSession::class);
+        return [
+            'dedupe_date' => 'date',
+        ];
     }
 
     public function user(): BelongsTo

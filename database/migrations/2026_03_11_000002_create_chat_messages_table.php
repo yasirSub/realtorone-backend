@@ -14,6 +14,7 @@ return new class extends Migration
             $table->foreignId('user_id')->nullable()->constrained()->onDelete('set null');
             $table->string('role'); // user, assistant, system
             $table->text('content');
+            // Token usage is added later via a migration to keep the initial schema small.
             $table->timestamps();
         });
     }

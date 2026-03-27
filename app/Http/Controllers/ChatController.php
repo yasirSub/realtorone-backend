@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AiCourseKnowledgeBase;
 use App\Models\ChatMessage;
 use App\Models\ChatSession;
 use App\Models\Course;
@@ -55,7 +56,7 @@ PROMPT;
             ];
         }
         if (preg_match('/\b(course|courses|training|learning|enrolled|what are the courses|list courses|show courses)\b/', $text)) {
-            $courses = $this->fetchCourseList();
+            $courses = $this->fetchAiCourseListForUser($user);
             $reply = $courses->isEmpty()
                 ? 'No courses available right now. Check the Courses tab for updates!'
                 : 'Here are the courses available to you:';
@@ -93,6 +94,30 @@ PROMPT;
     private function fetchCourseList()
     {
         return Course::orderBy('module_number')
+            ->orderBy('sequence')
+            ->get(['id', 'title', 'description', 'module_number']);
+    }
+
+    private function fetchAiCourseListForUser(?User $user)
+    {
+        $tier = $user?->membership_tier ?: 'Consultant';
+
+        $hasAnyForTier = AiCourseKnowledgeBase::query()
+            ->where('tier', $tier)
+            ->count();
+
+        // Backward compatibility: if the KB table isn't configured yet for this tier, fall back to all courses.
+        if ($hasAnyForTier === 0) {
+            return $this->fetchCourseList();
+        }
+
+        return Course::query()
+            ->whereIn('id', AiCourseKnowledgeBase::query()
+                ->select('course_id')
+                ->where('tier', $tier)
+                ->where('is_enabled', true)
+            )
+            ->orderBy('module_number')
             ->orderBy('sequence')
             ->get(['id', 'title', 'description', 'module_number']);
     }
@@ -151,7 +176,7 @@ PROMPT;
         $systemContent = $this->getSystemPrompt();
         $coursesForResponse = null;
         if (preg_match('/\b(course|courses|training|learning|enrolled|what are the courses|list courses|show courses)\b/i', $message)) {
-            $coursesForResponse = $this->fetchCourseList()->toArray();
+            $coursesForResponse = $this->fetchAiCourseListForUser($user)->toArray();
             if (!empty($coursesForResponse)) {
                 $list = collect($coursesForResponse)->map(fn ($c) => '- ' . ($c['title'] ?? '') . (isset($c['description']) ? ': ' . Str::limit($c['description'], 80) : ''))->implode("\n");
                 $systemContent .= "\n\nCurrent courses in the system:\n" . $list;
@@ -220,6 +245,11 @@ PROMPT;
 
             $data = $response->json();
             $reply = trim($data['choices'][0]['message']['content'] ?? '');
+            $usage = is_array($data['usage'] ?? null) ? $data['usage'] : null;
+            $totalTokens = is_array($usage) ? ($usage['total_tokens'] ?? null) : null;
+            $promptTokens = is_array($usage) ? ($usage['prompt_tokens'] ?? null) : null;
+            $completionTokens = is_array($usage) ? ($usage['completion_tokens'] ?? null) : null;
+            $model = is_string($data['model'] ?? null) ? $data['model'] : 'gpt-4o-mini';
 
             $contentToStore = $reply;
             if ($coursesForResponse !== null && !empty($coursesForResponse)) {
@@ -230,6 +260,10 @@ PROMPT;
                 'user_id' => null,
                 'role' => 'assistant',
                 'content' => $contentToStore,
+                'prompt_tokens' => $promptTokens,
+                'completion_tokens' => $completionTokens,
+                'total_tokens' => $totalTokens,
+                'model' => $model,
             ]);
 
             $payload = [

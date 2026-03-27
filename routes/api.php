@@ -1,6 +1,8 @@
 <?php
 
+use App\Http\Controllers\Admin\NotificationBroadcastController;
 use App\Models\User;
+use App\Models\UserPushToken;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -9,13 +11,18 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 
 // Helper function to get authenticated user
-function getAuthUser(Request $request) {
+function getAuthUser(Request $request)
+{
     $token = $request->bearerToken();
-    if (!$token) return null;
+    if (! $token) {
+        return null;
+    }
+
     return User::where('remember_token', $token)->first();
 }
 
-function seedDefaultActivityTypes() {
+function seedDefaultActivityTypes()
+{
     $identityKeys = [
         'visualization',
         'affirmations',
@@ -94,6 +101,164 @@ Route::get('/chat/history', [\App\Http\Controllers\ChatController::class, 'histo
 Route::get('/chat/history/{sessionId}', [\App\Http\Controllers\ChatController::class, 'history']);
 Route::delete('/chat/history/{sessionId}', [\App\Http\Controllers\ChatController::class, 'deleteSession']);
 
+// Admin: Reven AI inbox (monitor all user chat sessions/messages)
+Route::get('/admin/ai/users', function (Request $request) {
+    $admin = getAuthUser($request);
+    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+
+    $todayStart = now()->startOfDay();
+
+    $users = \App\Models\User::query()
+        ->where('email', '!=', 'admin@realtorone.com')
+        ->orderByDesc('created_at')
+        ->limit(200)
+        ->get(['id', 'name', 'email', 'membership_tier', 'is_premium']);
+
+    // Usage: sum assistant message tokens for last 24h + total.
+    foreach ($users as $u) {
+        $todayAgg = DB::table('chat_messages')
+            ->join('chat_sessions', 'chat_sessions.id', '=', 'chat_messages.chat_session_id')
+            ->where('chat_sessions.user_id', $u->id)
+            ->where('chat_messages.role', 'assistant')
+            ->where('chat_messages.created_at', '>=', $todayStart)
+            ->selectRaw('COALESCE(SUM(chat_messages.total_tokens), 0) as total_tokens, COUNT(*) as ai_calls')
+            ->first();
+
+        $totalAgg = DB::table('chat_messages')
+            ->join('chat_sessions', 'chat_sessions.id', '=', 'chat_messages.chat_session_id')
+            ->where('chat_sessions.user_id', $u->id)
+            ->where('chat_messages.role', 'assistant')
+            ->selectRaw('COALESCE(SUM(chat_messages.total_tokens), 0) as total_tokens, COUNT(*) as ai_calls')
+            ->first();
+
+        $u->ai_tokens_today = (int) ($todayAgg->total_tokens ?? 0);
+        $u->ai_calls_today = (int) ($todayAgg->ai_calls ?? 0);
+        $u->ai_tokens_total = (int) ($totalAgg->total_tokens ?? 0);
+        $u->ai_calls_total = (int) ($totalAgg->ai_calls ?? 0);
+    }
+
+    return response()->json(['success' => true, 'data' => $users]);
+});
+
+Route::get('/admin/ai/users/{userId}/sessions', function (Request $request, int $userId) {
+    $admin = getAuthUser($request);
+    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+
+    $sessions = \App\Models\ChatSession::query()
+        ->where('user_id', $userId)
+        ->orderByDesc('updated_at')
+        ->limit(100)
+        ->get(['id', 'title', 'created_at', 'updated_at']);
+
+    return response()->json(['success' => true, 'data' => $sessions]);
+});
+
+Route::get('/admin/ai/sessions/{sessionId}/messages', function (Request $request, int $sessionId) {
+    $admin = getAuthUser($request);
+    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+
+    $messages = \App\Models\ChatMessage::query()
+        ->where('chat_session_id', $sessionId)
+        ->orderBy('id')
+        ->get(['id', 'role', 'content', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'model', 'created_at']);
+
+    return response()->json(['success' => true, 'data' => $messages]);
+});
+
+// Admin: enabled AI KB courses for a user (based on user's membership tier)
+Route::get('/admin/ai/users/{userId}/kb', function (Request $request, int $userId) {
+    $admin = getAuthUser($request);
+    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+
+    $user = \App\Models\User::query()->find($userId);
+    if (! $user) {
+        return response()->json(['success' => false, 'message' => 'User not found'], 404);
+    }
+
+    $tier = $user->membership_tier ?: 'Consultant';
+
+    $courses = \App\Models\Course::query()
+        ->whereIn('id', function ($q) use ($tier) {
+            $q->select('course_id')
+                ->from('ai_course_knowledge_base')
+                ->where('tier', $tier)
+                ->where('is_enabled', true);
+        })
+        ->orderBy('module_number')
+        ->orderBy('sequence')
+        ->get(['id', 'title', 'description', 'module_number', 'sequence']);
+
+    return response()->json(['success' => true, 'data' => ['tier' => $tier, 'courses' => $courses]]);
+});
+
+// Admin: human handoff tickets
+Route::post('/admin/ai/tickets', function (Request $request) {
+    $admin = getAuthUser($request);
+    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+
+    $validated = $request->validate([
+        'user_id' => 'required|integer|exists:users,id',
+        'chat_session_id' => 'nullable|integer|exists:chat_sessions,id',
+        'request_message' => 'required|string|max:4000',
+    ]);
+
+    $ticket = \App\Models\AiHumanTicket::query()->create([
+        'user_id' => $validated['user_id'],
+        'chat_session_id' => $validated['chat_session_id'] ?? null,
+        'request_message' => $validated['request_message'],
+        'status' => 'open',
+    ]);
+
+    return response()->json(['success' => true, 'data' => $ticket]);
+});
+
+Route::get('/admin/ai/tickets', function (Request $request) {
+    $admin = getAuthUser($request);
+    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+
+    $tickets = \App\Models\AiHumanTicket::query()
+        ->orderByDesc('created_at')
+        ->limit(200)
+        ->get();
+
+    return response()->json(['success' => true, 'data' => $tickets]);
+});
+
+Route::post('/admin/ai/tickets/{ticketId}/resolve', function (Request $request, int $ticketId) {
+    $admin = getAuthUser($request);
+    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+
+    $validated = $request->validate([
+        'admin_resolution' => 'required|string|max:4000',
+    ]);
+
+    $ticket = \App\Models\AiHumanTicket::query()->find($ticketId);
+    if (! $ticket) {
+        return response()->json(['success' => false, 'message' => 'Ticket not found'], 404);
+    }
+
+    $ticket->admin_resolution = $validated['admin_resolution'];
+    $ticket->status = 'resolved';
+    $ticket->resolved_at = now();
+    $ticket->save();
+
+    return response()->json(['success' => true, 'data' => $ticket]);
+});
+
 Route::get('/admin/stats', function () {
     try {
         $userCount = \App\Models\User::count();
@@ -103,7 +268,8 @@ Route::get('/admin/stats', function () {
         try {
             $activityCount = \Illuminate\Support\Facades\DB::table('activities')->count();
             $activeToday = \Illuminate\Support\Facades\DB::table('activities')->whereDate('created_at', now()->toDateString())->count();
-        } catch (\Throwable $e) { }
+        } catch (\Throwable $e) {
+        }
 
         return response()->json([
             'total_users' => $userCount,
@@ -116,25 +282,25 @@ Route::get('/admin/stats', function () {
             'total_users' => 0,
             'total_activities' => 0,
             'db_connected' => false,
-            'error' => $e->getMessage()
+            'error' => $e->getMessage(),
         ]);
     }
 });
 
 Route::get('/admin/users', function () {
     $users = \App\Models\User::orderBy('created_at', 'desc')->get();
-    
+
     // Attach momentum data to each user
     $today = now()->toDateString();
     $users->each(function ($user) use ($today) {
         $metric = \App\Models\PerformanceMetric::where('user_id', $user->id)
             ->where('date', $today)
             ->first();
-        
+
         $user->daily_score = $metric ? $metric->total_momentum_score : 0;
         $user->today_subconscious = $metric ? $metric->subconscious_score : 0;
         $user->today_conscious = $metric ? $metric->conscious_score : 0;
-        
+
         // Rank badge based on streak
         $streak = $user->current_streak ?? 0;
         if ($streak >= 30) {
@@ -154,7 +320,7 @@ Route::get('/admin/users', function () {
             $user->badge_color = '#6b7280';
         }
     });
-    
+
     return response()->json($users);
 });
 
@@ -162,6 +328,7 @@ Route::post('/admin/users/{id}/toggle-status', function ($id) {
     $user = \App\Models\User::findOrFail($id);
     $user->status = ($user->status === 'inactive') ? 'active' : 'inactive';
     $user->save();
+
     return response()->json(['status' => 'ok', 'new_status' => $user->status]);
 });
 
@@ -170,6 +337,7 @@ Route::get('/admin/users/{id}/performance', function ($id) {
         ->orderBy('date', 'desc')
         ->limit(60) // Increased limit to support monthly/weekly views
         ->get();
+
     return response()->json(['success' => true, 'data' => $metrics]);
 });
 
@@ -178,12 +346,14 @@ Route::get('/admin/users/{id}/activities', function ($id) {
         ->orderBy('scheduled_at', 'desc')
         ->limit(150)
         ->get();
+
     return response()->json(['success' => true, 'data' => $activities]);
 });
 
 Route::delete('/admin/users/{id}', function ($id) {
     $user = \App\Models\User::findOrFail($id);
     $user->delete();
+
     return response()->json(['status' => 'ok']);
 });
 
@@ -205,6 +375,7 @@ Route::get('/admin/users/{id}/revenue-metrics', function ($id) {
         ->get()
         ->sum(function ($r) {
             $notes = is_string($r->notes) ? json_decode($r->notes, true) : $r->notes;
+
             return is_array($notes) ? (float) ($notes['commission'] ?? 0) : 0;
         });
     $commissionFromType = (float) \App\Models\Result::where('user_id', $user->id)
@@ -271,6 +442,7 @@ Route::post('/admin/packages', function (Request $request) {
         'features' => 'nullable|array',
     ]);
     $package = \App\Models\SubscriptionPackage::create($data);
+
     return response()->json(['success' => true, 'data' => $package]);
 });
 
@@ -285,12 +457,14 @@ Route::put('/admin/packages/{id}', function (Request $request, $id) {
         'is_active' => 'sometimes|boolean',
     ]);
     $package->update($data);
+
     return response()->json(['success' => true, 'data' => $package]);
 });
 
 Route::delete('/admin/packages/{id}', function ($id) {
     $package = \App\Models\SubscriptionPackage::findOrFail($id);
     $package->delete();
+
     return response()->json(['success' => true]);
 });
 
@@ -299,6 +473,7 @@ Route::get('/admin/subscriptions', function () {
     $subs = \App\Models\UserSubscription::with(['user', 'package', 'coupon'])
         ->orderBy('created_at', 'desc')
         ->get();
+
     return response()->json(['success' => true, 'data' => $subs]);
 });
 
@@ -315,12 +490,14 @@ Route::post('/admin/coupons', function (Request $request) {
         'max_uses' => 'nullable|integer|min:1',
     ]);
     $coupon = \App\Models\Coupon::create($data);
+
     return response()->json(['success' => true, 'data' => $coupon]);
 });
 
 Route::delete('/admin/coupons/{id}', function ($id) {
     $coupon = \App\Models\Coupon::findOrFail($id);
     $coupon->delete();
+
     return response()->json(['success' => true]);
 });
 
@@ -340,11 +517,54 @@ Route::post('admin/lessons/{id}/materials', [\App\Http\Controllers\CourseControl
 Route::put('admin/materials/{id}', [\App\Http\Controllers\CourseController::class, 'updateMaterial']);
 Route::delete('admin/materials/{id}', [\App\Http\Controllers\CourseController::class, 'destroyMaterial']);
 
+// AI Knowledge Base visibility per course + tier (admin)
+Route::get('admin/courses/{id}/ai-visibility', function ($id) {
+    $tiers = ['Consultant', 'Rainmaker', 'Titan'];
+
+    $rows = \App\Models\AiCourseKnowledgeBase::query()
+        ->where('course_id', $id)
+        ->get(['tier', 'is_enabled'])
+        ->keyBy('tier');
+
+    $data = [];
+    foreach ($tiers as $tier) {
+        $row = $rows->get($tier);
+        $data[$tier] = $row ? (bool) $row->is_enabled : false;
+    }
+
+    return response()->json(['success' => true, 'data' => $data]);
+});
+
+Route::post('admin/courses/{id}/ai-visibility', function (Request $request, $id) {
+    $validated = $request->validate([
+        'tiers' => 'required|array',
+        'tiers.Consultant' => 'required|boolean',
+        'tiers.Rainmaker' => 'required|boolean',
+        'tiers.Titan' => 'required|boolean',
+    ]);
+
+    $tiers = ['Consultant', 'Rainmaker', 'Titan'];
+
+    foreach ($tiers as $tier) {
+        \App\Models\AiCourseKnowledgeBase::query()->updateOrCreate(
+            ['course_id' => $id, 'tier' => $tier],
+            ['is_enabled' => (bool) ($validated['tiers'][$tier] ?? false)]
+        );
+    }
+
+    return response()->json(['success' => true]);
+});
+
+Route::get('/admin/notifications', [NotificationBroadcastController::class, 'index']);
+Route::post('/admin/notifications', [NotificationBroadcastController::class, 'store']);
+Route::post('/admin/notifications/{id}/cancel', [NotificationBroadcastController::class, 'cancel']);
+Route::post('/admin/notifications/{id}/send-now', [NotificationBroadcastController::class, 'sendNow']);
+
 // Video streaming with range request support (required for HTML5 video playback)
 Route::get('stream/{filename}', function (Request $request, $filename) {
-    $path = storage_path('app/public/course-assets/' . $filename);
+    $path = storage_path('app/public/course-assets/'.$filename);
 
-    if (!file_exists($path)) {
+    if (! file_exists($path)) {
         return response()->json(['error' => 'File not found'], 404);
     }
 
@@ -355,20 +575,20 @@ Route::get('stream/{filename}', function (Request $request, $filename) {
     $statusCode = 200;
 
     $headers = [
-        'Content-Type'              => $mimeType,
-        'Accept-Ranges'             => 'bytes',
+        'Content-Type' => $mimeType,
+        'Accept-Ranges' => 'bytes',
         'Access-Control-Allow-Origin' => '*',
-        'Cache-Control'             => 'public, max-age=86400',
-        'Content-Disposition'       => 'inline',
+        'Cache-Control' => 'public, max-age=86400',
+        'Content-Disposition' => 'inline',
     ];
 
     if ($request->hasHeader('Range')) {
         $range = $request->header('Range');
         preg_match('/bytes=(\d*)-(\d*)/', $range, $matches);
-        $start = $matches[1] !== '' ? (int)$matches[1] : 0;
-        $end   = $matches[2] !== '' ? (int)$matches[2] : $fileSize - 1;
-        $end   = min($end, $fileSize - 1);
-        $headers['Content-Range']  = "bytes {$start}-{$end}/{$fileSize}";
+        $start = $matches[1] !== '' ? (int) $matches[1] : 0;
+        $end = $matches[2] !== '' ? (int) $matches[2] : $fileSize - 1;
+        $end = min($end, $fileSize - 1);
+        $headers['Content-Range'] = "bytes {$start}-{$end}/{$fileSize}";
         $statusCode = 206;
     }
 
@@ -379,7 +599,7 @@ Route::get('stream/{filename}', function (Request $request, $filename) {
         $handle = fopen($path, 'rb');
         fseek($handle, $start);
         $remaining = $length;
-        while (!feof($handle) && $remaining > 0) {
+        while (! feof($handle) && $remaining > 0) {
             $chunk = min(1024 * 256, $remaining); // 256KB chunks
             echo fread($handle, $chunk);
             $remaining -= $chunk;
@@ -389,11 +609,12 @@ Route::get('stream/{filename}', function (Request $request, $filename) {
     }, $statusCode, $headers);
 });
 
-
 // User-facing Courses List
 Route::get('/courses', function (Request $request) {
     $user = getAuthUser($request);
-    if (!$user) return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    if (! $user) {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
 
     // Get current active subscription to determine tier rank
     $sub = \App\Models\UserSubscription::with('package')
@@ -404,12 +625,12 @@ Route::get('/courses', function (Request $request) {
         ->first();
 
     $userTierName = $sub ? $sub->package->name : 'Consultant';
-    
+
     // Mission Tier Hierarchy
     $tierRanks = [
         'consultant' => 0,
         'rainmaker' => 1,
-        'titan' => 2
+        'titan' => 2,
     ];
 
     $userTierKey = strtolower($userTierName);
@@ -431,57 +652,58 @@ Route::get('/courses', function (Request $request) {
     $moduleTierRequirements = [
         1 => 'consultant',  // Module 1: All tiers
         2 => 'rainmaker',   // Module 2: Rainmaker+
-        3 => 'titan'        // Module 3: Titan only
+        3 => 'titan',        // Module 3: Titan only
     ];
 
     foreach ($allCourses as $course) {
         $moduleNum = $course->module_number ?? 1;
         $courseRank = $tierRanks[strtolower($course->min_tier)] ?? 0;
-        
+
         // Check if module is accessible based on tier
         $moduleRequiredTier = $moduleTierRequirements[$moduleNum] ?? 'consultant';
         $moduleRequiredRank = $tierRanks[$moduleRequiredTier] ?? 0;
         $isModuleLocked = $currentRank < $moduleRequiredRank;
-        
+
         // Check if previous module is completed (for sequential unlocking)
         $isSequentiallyLocked = false;
         if ($moduleNum > 1) {
             $prevModuleNum = $moduleNum - 1;
             $prevModuleCourses = $allCourses->where('module_number', $prevModuleNum);
-            $prevModuleCompleted = $prevModuleCourses->every(function($prevCourse) use ($userProgress) {
+            $prevModuleCompleted = $prevModuleCourses->every(function ($prevCourse) use ($userProgress) {
                 $progress = $userProgress->get($prevCourse->id);
+
                 return $progress && $progress->is_completed;
             });
-            $isSequentiallyLocked = !$prevModuleCompleted && $prevModuleCourses->isNotEmpty();
+            $isSequentiallyLocked = ! $prevModuleCompleted && $prevModuleCourses->isNotEmpty();
         }
-        
+
         // Course is locked if: tier locked OR module locked OR sequentially locked
         $isLocked = ($courseRank > $currentRank) || $isModuleLocked || $isSequentiallyLocked;
-        
+
         $progress = $userProgress->get($course->id);
-        
-        if (!isset($modules[$moduleNum])) {
+
+        if (! isset($modules[$moduleNum])) {
             $modules[$moduleNum] = [
                 'module_number' => $moduleNum,
                 'module_name' => "Module $moduleNum",
                 'is_locked' => $isModuleLocked || $isSequentiallyLocked,
                 'required_tier' => ucfirst($moduleRequiredTier),
-                'courses' => []
+                'courses' => [],
             ];
         }
-        
+
         $modules[$moduleNum]['courses'][] = [
             'id' => $course->id,
             'title' => $course->title,
             'description' => $course->description,
-            'thumbnail_url' => $course->thumbnail_url ? url('storage/' . str_replace('course-assets/', '', $course->thumbnail_url)) : null,
+            'thumbnail_url' => $course->thumbnail_url ? url('storage/'.str_replace('course-assets/', '', $course->thumbnail_url)) : null,
             'url' => $course->url,
             'min_tier' => $course->min_tier,
             'module_number' => $moduleNum,
             'sequence' => $course->sequence ?? 0,
             'is_locked' => $isLocked,
             'progress_percent' => $progress ? $progress->progress_percent : 0,
-            'is_completed' => $progress ? (bool)$progress->is_completed : false,
+            'is_completed' => $progress ? (bool) $progress->is_completed : false,
         ];
     }
 
@@ -489,25 +711,27 @@ Route::get('/courses', function (Request $request) {
     $modulesArray = array_values($modules);
 
     return response()->json([
-        'success' => true, 
+        'success' => true,
         'data' => $modulesArray,
-        'user_tier' => $userTierName
+        'user_tier' => $userTierName,
     ]);
 });
 
 // User-facing Course Details (Curriculum)
 Route::get('/courses/{id}', function (Request $request, $id) {
     $user = getAuthUser($request);
-    if (!$user) return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    if (! $user) {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
 
     $course = \App\Models\Course::with([
         'modules.lessons.materials' => function ($query) {
             $query
                 ->orderByRaw("CASE WHEN LOWER(type) = 'video' THEN 0 WHEN LOWER(type) = 'pdf' THEN 1 ELSE 2 END")
                 ->orderBy('id');
-        }
+        },
     ])->findOrFail($id);
-    
+
     // Check if user has access to this course
     $sub = \App\Models\UserSubscription::with('package')
         ->where('user_id', $user->id)
@@ -535,7 +759,7 @@ Route::get('/courses/{id}', function (Request $request, $id) {
         $module->lessons->each(function ($lesson) use ($materialProgress) {
             $lesson->materials->each(function ($material) use ($materialProgress) {
                 $progress = $materialProgress->get($material->id);
-                $material->is_completed = $progress ? (bool)$progress->is_completed : false;
+                $material->is_completed = $progress ? (bool) $progress->is_completed : false;
                 $material->progress_seconds = $progress ? $progress->progress_seconds : 0;
                 $material->completed_at = $progress ? $progress->completed_at : null;
             });
@@ -544,18 +768,20 @@ Route::get('/courses/{id}', function (Request $request, $id) {
 
     return response()->json([
         'success' => true,
-        'data' => $course
+        'data' => $course,
     ]);
 });
 
 // Update course progress
 Route::post('/courses/{id}/progress', function (Request $request, $id) {
     $user = getAuthUser($request);
-    if (!$user) return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    if (! $user) {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
 
     $validated = $request->validate([
         'progress_percent' => 'required|integer|min:0|max:100',
-        'is_completed' => 'nullable|boolean'
+        'is_completed' => 'nullable|boolean',
     ]);
 
     $progress = DB::table('course_progress')
@@ -567,7 +793,7 @@ Route::post('/courses/{id}/progress', function (Request $request, $id) {
                 'completed_at' => ($validated['is_completed'] ?? ($validated['progress_percent'] >= 100)) ? now() : null,
                 'last_accessed_at' => now(),
                 'updated_at' => now(),
-                'created_at' => DB::raw('COALESCE(created_at, NOW())')
+                'created_at' => DB::raw('COALESCE(created_at, NOW())'),
             ]
         );
 
@@ -577,11 +803,13 @@ Route::post('/courses/{id}/progress', function (Request $request, $id) {
 // Update material progress
 Route::post('/courses/materials/{id}/progress', function (Request $request, $id) {
     $user = getAuthUser($request);
-    if (!$user) return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    if (! $user) {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
 
     $validated = $request->validate([
         'is_completed' => 'nullable|boolean',
-        'progress_seconds' => 'nullable|integer'
+        'progress_seconds' => 'nullable|integer',
     ]);
 
     $data = ['updated_at' => now()];
@@ -604,16 +832,18 @@ Route::post('/courses/materials/{id}/progress', function (Request $request, $id)
 // --- Course exam (available after course completion) ---
 Route::get('/courses/{id}/exam', function (Request $request, $id) {
     $user = getAuthUser($request);
-    if (!$user) return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    if (! $user) {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
 
     $courseId = (int) $id;
     $progress = DB::table('course_progress')->where('user_id', $user->id)->where('course_id', $courseId)->first();
-    if (!$progress || !$progress->is_completed) {
+    if (! $progress || ! $progress->is_completed) {
         return response()->json(['success' => false, 'message' => 'Complete the course first to take the exam'], 403);
     }
 
     $exam = DB::table('course_exams')->where('course_id', $courseId)->where('is_active', true)->first();
-    if (!$exam) {
+    if (! $exam) {
         return response()->json(['success' => false, 'message' => 'No exam available for this course'], 404);
     }
 
@@ -653,16 +883,18 @@ Route::get('/courses/{id}/exam', function (Request $request, $id) {
 
 Route::post('/courses/{id}/exam/submit', function (Request $request, $id) {
     $user = getAuthUser($request);
-    if (!$user) return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    if (! $user) {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
 
     $courseId = (int) $id;
     $progress = DB::table('course_progress')->where('user_id', $user->id)->where('course_id', $courseId)->first();
-    if (!$progress || !$progress->is_completed) {
+    if (! $progress || ! $progress->is_completed) {
         return response()->json(['success' => false, 'message' => 'Complete the course first'], 403);
     }
 
     $exam = DB::table('course_exams')->where('course_id', $courseId)->where('is_active', true)->first();
-    if (!$exam) {
+    if (! $exam) {
         return response()->json(['success' => false, 'message' => 'No exam available'], 404);
     }
 
@@ -723,7 +955,9 @@ Route::post('/courses/{id}/exam/submit', function (Request $request, $id) {
 // --- Admin: monitor user course progress and exam results ---
 Route::get('/admin/course-results', function (Request $request) {
     $user = getAuthUser($request);
-    if (!$user) return response()->json(['success' => false], 401);
+    if (! $user) {
+        return response()->json(['success' => false], 401);
+    }
     // Optional: add admin role check here
 
     $courseProgress = DB::table('course_progress')
@@ -774,10 +1008,12 @@ Route::get('/admin/course-results', function (Request $request) {
 // Admin: get course exam and questions
 Route::get('/admin/courses/{id}/exam', function (Request $request, $id) {
     $user = getAuthUser($request);
-    if (!$user) return response()->json(['success' => false], 401);
+    if (! $user) {
+        return response()->json(['success' => false], 401);
+    }
 
     $exam = DB::table('course_exams')->where('course_id', (int) $id)->first();
-    if (!$exam) {
+    if (! $exam) {
         return response()->json(['success' => true, 'data' => null]);
     }
 
@@ -811,7 +1047,9 @@ Route::get('/admin/courses/{id}/exam', function (Request $request, $id) {
 // Admin: create course exam
 Route::post('/admin/courses/{id}/exam', function (Request $request, $id) {
     $user = getAuthUser($request);
-    if (!$user) return response()->json(['success' => false], 401);
+    if (! $user) {
+        return response()->json(['success' => false], 401);
+    }
 
     $validated = $request->validate([
         'title' => 'required|string',
@@ -834,7 +1072,9 @@ Route::post('/admin/courses/{id}/exam', function (Request $request, $id) {
 
 Route::post('/admin/exams/{examId}/questions', function (Request $request, $examId) {
     $user = getAuthUser($request);
-    if (!$user) return response()->json(['success' => false], 401);
+    if (! $user) {
+        return response()->json(['success' => false], 401);
+    }
 
     $validated = $request->validate([
         'question_text' => 'required|string',
@@ -864,7 +1104,9 @@ Route::post('/admin/exams/{examId}/questions', function (Request $request, $exam
 
 Route::get('/admin/users/{userId}/course-detail', function (Request $request, $userId) {
     $auth = getAuthUser($request);
-    if (!$auth) return response()->json(['success' => false], 401);
+    if (! $auth) {
+        return response()->json(['success' => false], 401);
+    }
 
     $userId = (int) $userId;
 
@@ -942,7 +1184,9 @@ Route::get('/admin/users/{userId}/course-detail', function (Request $request, $u
 // Admin: Force-complete a course for a user (for testing / support)
 Route::post('/admin/force-complete-course', function (Request $request) {
     $auth = getAuthUser($request);
-    if (!$auth) return response()->json(['success' => false], 401);
+    if (! $auth) {
+        return response()->json(['success' => false], 401);
+    }
 
     $validated = $request->validate([
         'email' => 'required|email',
@@ -950,10 +1194,14 @@ Route::post('/admin/force-complete-course', function (Request $request) {
     ]);
 
     $user = User::where('email', $validated['email'])->first();
-    if (!$user) return response()->json(['success' => false, 'message' => 'User not found'], 404);
+    if (! $user) {
+        return response()->json(['success' => false, 'message' => 'User not found'], 404);
+    }
 
     $course = DB::table('courses')->find($validated['course_id']);
-    if (!$course) return response()->json(['success' => false, 'message' => 'Course not found'], 404);
+    if (! $course) {
+        return response()->json(['success' => false, 'message' => 'Course not found'], 404);
+    }
 
     $materialIds = DB::table('course_materials')
         ->join('course_lessons', 'course_lessons.id', '=', 'course_materials.course_lesson_id')
@@ -991,7 +1239,9 @@ Route::post('/admin/force-complete-course', function (Request $request) {
 // Add this to the protected group
 Route::get('/user/rewards', function (Request $request) {
     $user = getAuthUser($request);
-    if (!$user) return response()->json(['success' => false], 401);
+    if (! $user) {
+        return response()->json(['success' => false], 401);
+    }
 
     $totalPoints = DB::table('activities')
         ->where('user_id', $user->id)
@@ -1008,14 +1258,16 @@ Route::get('/user/rewards', function (Request $request) {
     return response()->json([
         'success' => true,
         'total_rewards' => (int) $totalPoints,
-        'breakdown' => $breakdown
+        'breakdown' => $breakdown,
     ]);
 });
 
 // Points history: all completed activities with date, activity name, and points
 Route::get('/user/points-history', function (Request $request) {
     $user = getAuthUser($request);
-    if (!$user) return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    if (! $user) {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
 
     $limit = $request->get('limit', 100); // Default to last 100 entries
     $offset = $request->get('offset', 0);
@@ -1058,14 +1310,16 @@ Route::get('/user/points-history', function (Request $request) {
 Route::get('/packages', function () {
     return response()->json([
         'success' => true,
-        'data' => \App\Models\SubscriptionPackage::where('is_active', true)->orderBy('tier_level', 'asc')->get()
+        'data' => \App\Models\SubscriptionPackage::where('is_active', true)->orderBy('tier_level', 'asc')->get(),
     ]);
 });
 
 // User-facing: Get my active subscription
 Route::get('/user/subscription', function (Request $request) {
     $user = getAuthUser($request);
-    if (!$user) return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    if (! $user) {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
 
     $sub = \App\Models\UserSubscription::with('package')
         ->where('user_id', $user->id)
@@ -1093,8 +1347,12 @@ Route::post('/subscriptions/validate-coupon', function (Request $request) {
         })
         ->first();
 
-    if (!$coupon) return response()->json(['success' => false, 'message' => 'Invalid or expired coupon']);
-    if ($coupon->max_uses && $coupon->used_count >= $coupon->max_uses) return response()->json(['success' => false, 'message' => 'Coupon usage limit reached']);
+    if (! $coupon) {
+        return response()->json(['success' => false, 'message' => 'Invalid or expired coupon']);
+    }
+    if ($coupon->max_uses && $coupon->used_count >= $coupon->max_uses) {
+        return response()->json(['success' => false, 'message' => 'Coupon usage limit reached']);
+    }
 
     return response()->json(['success' => true, 'data' => $coupon]);
 });
@@ -1102,7 +1360,9 @@ Route::post('/subscriptions/validate-coupon', function (Request $request) {
 Route::post('/subscriptions/purchase', function (Request $request) {
     // Purchase logic with auth
     $user = getAuthUser($request);
-    if (!$user) return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    if (! $user) {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
     $data = $request->validate([
         'package_id' => 'required|exists:subscription_packages,id',
         'months' => 'required|integer|min:1',
@@ -1111,7 +1371,7 @@ Route::post('/subscriptions/purchase', function (Request $request) {
     ]);
 
     $package = \App\Models\SubscriptionPackage::findOrFail($data['package_id']);
-    
+
     // Calculate amount
     $months = (int) $data['months'];
 
@@ -1166,7 +1426,7 @@ Route::post('/subscriptions/purchase', function (Request $request) {
     $user->update([
         'membership_tier' => $package->name,
         'is_premium' => true,
-        'premium_expires_at' => $sub->expires_at
+        'premium_expires_at' => $sub->expires_at,
     ]);
 
     return response()->json(['success' => true, 'data' => $sub]);
@@ -1176,18 +1436,20 @@ Route::post('/subscriptions/purchase', function (Request $request) {
 Route::get('/admin/settings/user-activity-points', function () {
     // Default 20 if not set
     $points = cache('user_activity_points', 20);
+
     return response()->json(['success' => true, 'points' => $points]);
 });
 
 Route::post('/admin/settings/user-activity-points', function (Request $request) {
     $data = $request->validate(['points' => 'required|integer|min:1|max:100']);
     cache(['user_activity_points' => $data['points']], now()->addYears(5));
+
     return response()->json(['success' => true, 'points' => $data['points']]);
 });
 
 Route::post('/admin/login', function (Request $request) {
     Log::info('Admin Login Attempt', ['email' => $request->email]);
-    
+
     // Ensure admin user exists (create/update for initial access)
     \App\Models\User::updateOrCreate(
         ['email' => 'admin@realtorone.com'],
@@ -1207,21 +1469,21 @@ Route::post('/admin/login', function (Request $request) {
     if ($user && \Illuminate\Support\Facades\Hash::check($credentials['password'], $user->password)) {
         $token = bin2hex(random_bytes(32));
         $user->update(['remember_token' => $token]);
-        
+
         Log::info('Admin Login Success', ['user_id' => $user->id]);
-        
+
         // Attach momentum data
         $today = now()->toDateString();
         $metric = \App\Models\PerformanceMetric::where('user_id', $user->id)
             ->where('date', $today)
             ->first();
-        
+
         $user->daily_score = $metric ? $metric->total_momentum_score : 0;
-        
+
         return response()->json([
             'status' => 'ok',
             'token' => $token,
-            'user' => $user
+            'user' => $user,
         ]);
     }
 
@@ -1229,7 +1491,7 @@ Route::post('/admin/login', function (Request $request) {
 
     return response()->json([
         'message' => 'Credentials mismatch. Error 401: Unauthorized access to system core.',
-        'debug_hint' => 'Check if email is admin@realtorone.com'
+        'debug_hint' => 'Check if email is admin@realtorone.com',
     ], 401);
 });
 
@@ -1239,7 +1501,7 @@ Route::get('/admin/momentum-leaders', function () {
         ->orderBy('total_momentum_score', 'desc')
         ->limit(10)
         ->get();
-    
+
     return response()->json($leaders);
 });
 
@@ -1295,7 +1557,10 @@ Route::get('/activity-types', function (Request $request) {
             $type->video_reel_script_idea = $selectedLog->script_idea ?? $type->script_idea;
             $type->daily_feedback = $selectedLog->feedback ?? null;
             $type->daily_audio_url = $selectedLog->audio_url ?? null;
+            $type->daily_required_listen_percent = $selectedLog->required_listen_percent ?? 0;
+            $type->daily_require_user_response = (bool) ($selectedLog->require_user_response ?? false);
             $type->has_daily_log = $selectedLog !== null;
+
             return $type;
         });
     }
@@ -1305,10 +1570,10 @@ Route::get('/activity-types', function (Request $request) {
 
 Route::post('/activity-types', function (Request $request) {
     $user = getAuthUser($request);
-    if (!$user) {
+    if (! $user) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
-    
+
     $data = $request->validate([
         'name' => 'required|string|max:255',
         'icon' => 'nullable|string',
@@ -1318,7 +1583,7 @@ Route::post('/activity-types', function (Request $request) {
         'section_order' => 'nullable|integer|min:0',
         'item_order' => 'nullable|integer|min:0',
     ]);
-    
+
     // Users can only create subconscious activities with admin-configurable points
     $userPoints = cache('user_activity_points', 20);
     $activityType = \App\Models\ActivityType::create([
@@ -1335,7 +1600,7 @@ Route::post('/activity-types', function (Request $request) {
         'section_order' => $data['section_order'] ?? 99,
         'item_order' => $data['item_order'] ?? 0,
     ]);
-    
+
     return response()->json(['success' => true, 'data' => $activityType]);
 });
 
@@ -1373,7 +1638,7 @@ Route::post('/admin/activity-types', function (Request $request) {
 
 Route::put('/admin/activity-types/{id}', function (Request $request, $id) {
     $activityType = \App\Models\ActivityType::findOrFail($id);
-    
+
     $data = $request->validate([
         'name' => 'sometimes|string|max:255',
         'points' => 'sometimes|integer|min:1',
@@ -1386,12 +1651,12 @@ Route::put('/admin/activity-types/{id}', function (Request $request, $id) {
         'section_order' => 'sometimes|integer|min:0',
         'item_order' => 'sometimes|integer|min:0',
     ]);
-    
+
     $activityType->update($data);
     if (isset($data['name'])) {
         $activityType->update(['type_key' => Str::slug($data['name'], '_')]);
     }
-    
+
     return response()->json(['success' => true, 'data' => $activityType->fresh()]);
 });
 
@@ -1461,6 +1726,8 @@ Route::put('/admin/activity-types/{id}/daily-logs/{day}', function (Request $req
         'script_idea' => 'nullable|string',
         'feedback' => 'nullable|string',
         'audio_url' => 'nullable|string|max:2048',
+        'required_listen_percent' => 'nullable|integer|min:0|max:100',
+        'require_user_response' => 'nullable|boolean',
     ]);
 
     DB::table('activity_type_daily_logs')->updateOrInsert(
@@ -1473,6 +1740,8 @@ Route::put('/admin/activity-types/{id}/daily-logs/{day}', function (Request $req
             'script_idea' => $data['script_idea'] ?? null,
             'feedback' => $data['feedback'] ?? null,
             'audio_url' => $data['audio_url'] ?? null,
+            'required_listen_percent' => isset($data['required_listen_percent']) ? (int) $data['required_listen_percent'] : 0,
+            'require_user_response' => isset($data['require_user_response']) ? (bool) $data['require_user_response'] : false,
             'updated_at' => now(),
             'created_at' => now(),
         ]
@@ -1489,6 +1758,23 @@ Route::put('/admin/activity-types/{id}/daily-logs/{day}', function (Request $req
     ]);
 });
 
+Route::delete('/admin/activity-types/{id}/daily-logs/{day}', function ($id, $day) {
+    $activityType = \App\Models\ActivityType::findOrFail($id);
+    $dayNumber = (int) $day;
+    if ($dayNumber < 1 || $dayNumber > 365) {
+        return response()->json(['success' => false, 'message' => 'Invalid day number'], 422);
+    }
+
+    DB::table('activity_type_daily_logs')
+        ->where('activity_type_id', $activityType->id)
+        ->where('day_number', $dayNumber)
+        ->delete();
+
+    return response()->json([
+        'success' => true,
+    ]);
+});
+
 Route::post('/admin/activity-types/{id}/daily-logs/bulk', function (Request $request, $id) {
     $activityType = \App\Models\ActivityType::findOrFail($id);
 
@@ -1499,6 +1785,8 @@ Route::post('/admin/activity-types/{id}/daily-logs/bulk', function (Request $req
         'entries.*.script_idea' => 'nullable|string',
         'entries.*.feedback' => 'nullable|string',
         'entries.*.audio_url' => 'nullable|string|max:2048',
+        'entries.*.required_listen_percent' => 'nullable|integer|min:0|max:100',
+        'entries.*.require_user_response' => 'nullable|boolean',
     ]);
 
     $now = now();
@@ -1510,6 +1798,8 @@ Route::post('/admin/activity-types/{id}/daily-logs/bulk', function (Request $req
             'script_idea' => $entry['script_idea'] ?? null,
             'feedback' => $entry['feedback'] ?? null,
             'audio_url' => $entry['audio_url'] ?? null,
+            'required_listen_percent' => isset($entry['required_listen_percent']) ? (int) $entry['required_listen_percent'] : 0,
+            'require_user_response' => isset($entry['require_user_response']) ? (bool) $entry['require_user_response'] : false,
             'created_at' => $now,
             'updated_at' => $now,
         ];
@@ -1518,7 +1808,7 @@ Route::post('/admin/activity-types/{id}/daily-logs/bulk', function (Request $req
     DB::table('activity_type_daily_logs')->upsert(
         $rows,
         ['activity_type_id', 'day_number'],
-        ['task_description', 'script_idea', 'feedback', 'audio_url', 'updated_at']
+        ['task_description', 'script_idea', 'feedback', 'audio_url', 'required_listen_percent', 'require_user_response', 'updated_at']
     );
 
     return response()->json([
@@ -1530,6 +1820,7 @@ Route::post('/admin/activity-types/{id}/daily-logs/bulk', function (Request $req
 Route::delete('/admin/activity-types/{id}', function ($id) {
     $activityType = \App\Models\ActivityType::findOrFail($id);
     $activityType->delete();
+
     return response()->json(['success' => true]);
 });
 
@@ -1564,7 +1855,7 @@ Route::post('/login', function (Request $request) {
 
     $user = User::where('email', $data['email'])->first();
 
-    if (!$user || !Hash::check($data['password'], $user->password)) {
+    if (! $user || ! Hash::check($data['password'], $user->password)) {
         return response()->json([
             'status' => 'error',
             'message' => 'Invalid credentials.',
@@ -1586,9 +1877,49 @@ Route::post('/login', function (Request $request) {
     ]);
 });
 
+Route::post('/user/push-token', function (Request $request) {
+    $user = getAuthUser($request);
+    if (! $user) {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+
+    $data = $request->validate([
+        'token' => ['required', 'string', 'max:512'],
+        'platform' => ['nullable', 'string', 'max:32'],
+    ]);
+
+    UserPushToken::query()->updateOrCreate(
+        [
+            'user_id' => $user->id,
+            'token' => $data['token'],
+        ],
+        [
+            'platform' => $data['platform'] ?? 'android',
+        ]
+    );
+
+    return response()->json(['success' => true]);
+});
+
+Route::delete('/user/push-token', function (Request $request) {
+    $user = getAuthUser($request);
+    if (! $user) {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+
+    $token = $request->input('token');
+    if (is_string($token) && $token !== '') {
+        UserPushToken::query()->where('user_id', $user->id)->where('token', $token)->delete();
+    } else {
+        UserPushToken::query()->where('user_id', $user->id)->delete();
+    }
+
+    return response()->json(['success' => true]);
+});
+
 Route::post('/logout', function (Request $request) {
     $token = $request->bearerToken();
-    
+
     if ($token) {
         $user = User::where('remember_token', $token)->first();
         if ($user) {
@@ -1609,7 +1940,7 @@ Route::post('/password/forgot', function (Request $request) {
 
     $user = User::where('email', $data['email'])->first();
 
-    if (!$user) {
+    if (! $user) {
         return response()->json([
             'status' => 'error',
             'message' => 'User not found.',
@@ -1637,7 +1968,7 @@ Route::post('/password/reset', function (Request $request) {
 
     $user = User::where('remember_token', $data['token'])->first();
 
-    if (!$user) {
+    if (! $user) {
         return response()->json([
             'status' => 'error',
             'message' => 'Invalid or expired token.',
@@ -1662,7 +1993,7 @@ Route::post('/email/verify', function (Request $request) {
 
     $user = User::where('email', $data['email'])->first();
 
-    if (!$user) {
+    if (! $user) {
         return response()->json([
             'status' => 'error',
             'message' => 'User not found.',
@@ -1680,15 +2011,15 @@ Route::post('/email/verify', function (Request $request) {
 
 // Protected routes (require authentication)
 Route::group(['middleware' => []], function () {
-    
+
     // ============== USER PROFILE ==============
-    
+
     Route::get('/user/profile', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
-        
+
         return response()->json([
             'success' => true,
             'data' => [
@@ -1703,7 +2034,7 @@ Route::group(['middleware' => []], function () {
                 'years_experience' => $user->years_experience,
                 'current_monthly_income' => $user->current_monthly_income,
                 'target_monthly_income' => $user->target_monthly_income,
-                'profile_photo' => $user->profile_photo_path ? url('storage/' . $user->profile_photo_path) : null,
+                'profile_photo' => $user->profile_photo_path ? url('storage/'.$user->profile_photo_path) : null,
                 'is_profile_complete' => (bool) $user->is_profile_complete,
                 'has_completed_diagnosis' => (bool) $user->has_completed_diagnosis,
                 'diagnosis_blocker' => $user->diagnosis_blocker,
@@ -1727,13 +2058,13 @@ Route::group(['middleware' => []], function () {
 
     Route::put('/user/profile', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
-        
+
         $data = $request->validate([
             'name' => ['sometimes', 'string', 'max:255'],
-            'email' => ['sometimes', 'email', 'max:255', 'unique:users,email,' . $user->id],
+            'email' => ['sometimes', 'email', 'max:255', 'unique:users,email,'.$user->id],
             'mobile' => ['sometimes', 'nullable', 'string', 'max:20'],
             'city' => ['sometimes', 'nullable', 'string', 'max:100'],
             'brokerage' => ['sometimes', 'nullable', 'string', 'max:255'],
@@ -1754,13 +2085,13 @@ Route::group(['middleware' => []], function () {
 
     Route::put('/user/profile/setup', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
-        
+
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'email', 'max:255', 'unique:users,email,' . $user->id],
+            'email' => ['required', 'email', 'max:255', 'unique:users,email,'.$user->id],
             'mobile' => ['required', 'string', 'max:20'],
             'city' => ['required', 'string', 'max:100'],
             'brokerage' => ['required', 'string', 'max:255'],
@@ -1783,16 +2114,16 @@ Route::group(['middleware' => []], function () {
 
     Route::post('/user/change-password', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
-        
+
         $data = $request->validate([
             'current_password' => ['required', 'string'],
             'new_password' => ['required', 'string', 'min:6'],
         ]);
 
-        if (!Hash::check($data['current_password'], $user->password)) {
+        if (! Hash::check($data['current_password'], $user->password)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Current password is incorrect',
@@ -1811,10 +2142,10 @@ Route::group(['middleware' => []], function () {
 
     Route::post('/user/photo', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
-        
+
         $request->validate([
             'photo' => ['required', 'image', 'max:2048'],
         ]);
@@ -1825,18 +2156,132 @@ Route::group(['middleware' => []], function () {
         return response()->json([
             'success' => true,
             'message' => 'Photo uploaded successfully',
-            'photo_url' => asset('storage/' . $path),
+            'photo_url' => asset('storage/'.$path),
         ]);
     });
 
     // ============== DIAGNOSIS ==============
-    
-    Route::post('/diagnosis/submit', function (Request $request) {
+
+    Route::get('/diagnosis/questions', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
-        
+
+        $questions = DB::table('diagnosis_questions')
+            ->where('is_active', true)
+            ->orderBy('display_order')
+            ->orderBy('id')
+            ->get();
+
+        $data = $questions->map(function ($q) {
+            return [
+                'id' => (int) $q->id,
+                'question' => $q->question_text,
+                'display_order' => (int) $q->display_order,
+                'options' => json_decode($q->options_json, true) ?? [],
+            ];
+        })->values();
+
+        return response()->json(['success' => true, 'data' => $data]);
+    });
+
+    Route::get('/admin/diagnosis/questions', function (Request $request) {
+        $admin = getAuthUser($request);
+        if (! $admin || $admin->email !== 'admin@realtorone.com') {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $questions = DB::table('diagnosis_questions')
+            ->orderBy('display_order')
+            ->orderBy('id')
+            ->get()
+            ->map(function ($q) {
+                return [
+                    'id' => (int) $q->id,
+                    'question_text' => $q->question_text,
+                    'display_order' => (int) $q->display_order,
+                    'is_active' => (bool) $q->is_active,
+                    'options' => json_decode($q->options_json, true) ?? [],
+                ];
+            })->values();
+
+        return response()->json(['success' => true, 'data' => $questions]);
+    });
+
+    Route::post('/admin/diagnosis/questions', function (Request $request) {
+        $admin = getAuthUser($request);
+        if (! $admin || $admin->email !== 'admin@realtorone.com') {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $data = $request->validate([
+            'question_text' => ['required', 'string', 'max:1000'],
+            'display_order' => ['required', 'integer', 'min:1'],
+            'is_active' => ['nullable', 'boolean'],
+            'options' => ['required', 'array', 'min:2'],
+            'options.*.text' => ['required', 'string', 'max:500'],
+            'options.*.blocker_type' => ['required', 'string', 'in:leadGeneration,confidence,closing,discipline'],
+            'options.*.score' => ['required', 'integer', 'min:0', 'max:10'],
+        ]);
+
+        $id = DB::table('diagnosis_questions')->insertGetId([
+            'question_text' => $data['question_text'],
+            'display_order' => (int) $data['display_order'],
+            'is_active' => isset($data['is_active']) ? (bool) $data['is_active'] : true,
+            'options_json' => json_encode($data['options']),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return response()->json(['success' => true, 'data' => ['id' => $id]]);
+    });
+
+    Route::put('/admin/diagnosis/questions/{id}', function (Request $request, $id) {
+        $admin = getAuthUser($request);
+        if (! $admin || $admin->email !== 'admin@realtorone.com') {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $data = $request->validate([
+            'question_text' => ['required', 'string', 'max:1000'],
+            'display_order' => ['required', 'integer', 'min:1'],
+            'is_active' => ['required', 'boolean'],
+            'options' => ['required', 'array', 'min:2'],
+            'options.*.text' => ['required', 'string', 'max:500'],
+            'options.*.blocker_type' => ['required', 'string', 'in:leadGeneration,confidence,closing,discipline'],
+            'options.*.score' => ['required', 'integer', 'min:0', 'max:10'],
+        ]);
+
+        DB::table('diagnosis_questions')
+            ->where('id', $id)
+            ->update([
+                'question_text' => $data['question_text'],
+                'display_order' => (int) $data['display_order'],
+                'is_active' => (bool) $data['is_active'],
+                'options_json' => json_encode($data['options']),
+                'updated_at' => now(),
+            ]);
+
+        return response()->json(['success' => true]);
+    });
+
+    Route::delete('/admin/diagnosis/questions/{id}', function (Request $request, $id) {
+        $admin = getAuthUser($request);
+        if (! $admin || $admin->email !== 'admin@realtorone.com') {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        DB::table('diagnosis_questions')->where('id', $id)->delete();
+        return response()->json(['success' => true]);
+    });
+
+    Route::post('/diagnosis/submit', function (Request $request) {
+        $user = getAuthUser($request);
+        if (! $user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
         $data = $request->validate([
             'primary_blocker' => ['required', 'string', 'in:leadGeneration,confidence,closing,discipline'],
             'scores' => ['required', 'array'],
@@ -1862,15 +2307,15 @@ Route::group(['middleware' => []], function () {
     });
 
     // ============== ACTIVITIES ==============
-    
+
     Route::get('/activities', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
-        
+
         $date = $request->get('date', now()->toDateString());
-        
+
         $activities = DB::table('activities')
             ->where('user_id', $user->id)
             ->whereDate('scheduled_at', $date)
@@ -1885,13 +2330,14 @@ Route::group(['middleware' => []], function () {
 
     Route::post('/activities', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
-        
+
         $data = $request->validate([
             'title' => ['required', 'string', 'max:255'],
             'description' => ['sometimes', 'nullable', 'string'],
+            'notes' => ['sometimes', 'nullable', 'string'],
             'type' => ['required', 'string'],
             'category' => ['required', 'string', 'in:conscious,subconscious,task'],
             'duration_minutes' => ['sometimes', 'integer', 'min:1'],
@@ -1915,21 +2361,21 @@ Route::group(['middleware' => []], function () {
 
     Route::put('/activities/{id}/complete', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
-        
+
         $activity = DB::table('activities')
             ->where('id', $id)
             ->where('user_id', $user->id)
             ->first();
 
-        if (!$activity) {
+        if (! $activity) {
             return response()->json(['success' => false, 'message' => 'Activity not found'], 404);
         }
 
         // Award points for this activity type when completing
-        $service = new \App\Services\PerformanceService();
+        $service = new \App\Services\PerformanceService;
         $points = $service->getActivityPoints($activity->type);
 
         DB::table('activities')->where('id', $id)->update([
@@ -1986,7 +2432,7 @@ Route::group(['middleware' => []], function () {
 
         // Recalculate daily score and award badges (keeps dashboard in sync)
         $metric = $service->calculateDailyScore($user);
-        $badgeService = new \App\Services\BadgeService();
+        $badgeService = new \App\Services\BadgeService;
         $newBadges = $badgeService->checkAndAwardBadges($user);
 
         return response()->json([
@@ -2001,31 +2447,31 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/activities/progress', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
-        
+
         $today = now()->toDateString();
-        
+
         $tasksTotal = DB::table('activities')
             ->where('user_id', $user->id)
             ->whereDate('scheduled_at', $today)
             ->where('category', 'task')
             ->count();
-            
+
         $tasksCompleted = DB::table('activities')
             ->where('user_id', $user->id)
             ->whereDate('scheduled_at', $today)
             ->where('category', 'task')
             ->where('is_completed', true)
             ->count();
-            
+
         $subconsciousTotal = DB::table('activities')
             ->where('user_id', $user->id)
             ->whereDate('scheduled_at', $today)
             ->where('category', 'subconscious')
             ->count();
-            
+
         $subconsciousCompleted = DB::table('activities')
             ->where('user_id', $user->id)
             ->whereDate('scheduled_at', $today)
@@ -2049,7 +2495,7 @@ Route::group(['middleware' => []], function () {
 
     Route::post('/activities/log', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -2061,7 +2507,7 @@ Route::group(['middleware' => []], function () {
             'notes' => ['sometimes', 'nullable', 'string'],
         ]);
 
-        $service = new \App\Services\PerformanceService();
+        $service = new \App\Services\PerformanceService;
         $points = $service->getActivityPoints($data['type']);
 
         $activity = \App\Models\Activity::create([
@@ -2113,7 +2559,7 @@ Route::group(['middleware' => []], function () {
         $metric = $service->calculateDailyScore($user);
 
         // Check and award badges
-        $badgeService = new \App\Services\BadgeService();
+        $badgeService = new \App\Services\BadgeService;
         $newBadges = $badgeService->checkAndAwardBadges($user);
 
         return response()->json([
@@ -2130,11 +2576,11 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/dashboard/momentum', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
-        $service = new \App\Services\PerformanceService();
+        $service = new \App\Services\PerformanceService;
         $metric = $service->calculateDailyScore($user);
 
         return response()->json([
@@ -2151,10 +2597,10 @@ Route::group(['middleware' => []], function () {
     });
 
     // ============== LEARNING ==============
-    
+
     Route::get('/learning/categories', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -2177,21 +2623,21 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/learning/content', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
         $category = $request->get('category');
-        
+
         $query = DB::table('learning_content')
             ->where('is_active', true);
-            
+
         if ($category) {
             $query->where('category', $category);
         }
-        
+
         // If user is not premium, only show free content
-        if (!$user->is_premium) {
+        if (! $user->is_premium) {
             $query->where('tier', 'free');
         }
 
@@ -2205,6 +2651,7 @@ Route::group(['middleware' => []], function () {
         $content = $content->map(function ($item) use ($progress) {
             $item->progress_percent = $progress[$item->id] ?? 0;
             $item->is_completed = ($progress[$item->id] ?? 0) >= 100;
+
             return $item;
         });
 
@@ -2216,7 +2663,7 @@ Route::group(['middleware' => []], function () {
 
     Route::post('/learning/progress', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -2245,10 +2692,10 @@ Route::group(['middleware' => []], function () {
     });
 
     // ============== DASHBOARD ==============
-    
+
     Route::get('/dashboard/stats', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -2300,7 +2747,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/reports/growth', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -2319,7 +2766,7 @@ Route::group(['middleware' => []], function () {
                     ->where('user_id', $user->id)
                     ->whereDate('completed_at', $dateStr)
                     ->where('is_completed', true);
-                
+
                 $data[] = $query->count();
                 $pointsData[] = (int) $query->sum('points');
             }
@@ -2333,7 +2780,7 @@ Route::group(['middleware' => []], function () {
                     ->where('user_id', $user->id)
                     ->whereDate('completed_at', $dateStr)
                     ->where('is_completed', true);
-                
+
                 $data[] = $query->count();
                 $pointsData[] = (int) $query->sum('points');
             }
@@ -2349,7 +2796,7 @@ Route::group(['middleware' => []], function () {
                     ->whereYear('completed_at', $year)
                     ->whereMonth('completed_at', $month)
                     ->where('is_completed', true);
-                
+
                 $data[] = $query->count();
                 $pointsData[] = (int) $query->sum('points');
             }
@@ -2373,7 +2820,7 @@ Route::group(['middleware' => []], function () {
             'breakdown' => $breakdown,
             'growth_score' => $user->growth_score ?? 0,
             'execution_rate' => $user->execution_rate ?? 0,
-            'total_rewards' => (int) DB::table('activities')->where('user_id', $user->id)->where('is_completed', true)->sum('points')
+            'total_rewards' => (int) DB::table('activities')->where('user_id', $user->id)->where('is_completed', true)->sum('points'),
         ]);
     });
 
@@ -2381,12 +2828,12 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/tasks/today', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
         $today = now()->toDateString();
-        
+
         // Get today's tasks/activities
         $tasks = DB::table('activities')
             ->where('user_id', $user->id)
@@ -2420,14 +2867,14 @@ Route::group(['middleware' => []], function () {
     });
 
     // ============== RESULTS TRACKER (Phase 2) ==============
-    
+
     // ----- CLIENTS (Results-based) -----
     // Simple wrapper endpoints so the app can ask:
     // 1) "Does this user have any clients yet?"
     // 2) "Create the first client" (stored as a hot_lead result)
     Route::get('/clients/status', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -2445,7 +2892,7 @@ Route::group(['middleware' => []], function () {
 
     Route::post('/clients', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -2480,7 +2927,7 @@ Route::group(['middleware' => []], function () {
     // Per-client daily execution progress (what % of today's actions are completed)
     Route::get('/clients/{id}/daily-progress', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -2489,7 +2936,7 @@ Route::group(['middleware' => []], function () {
             ->findOrFail($id);
 
         $date = $request->get('date', now()->toDateString());
-        if (!is_string($date) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+        if (! is_string($date) || ! preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
             $date = now()->toDateString();
         }
 
@@ -2559,7 +3006,7 @@ Route::group(['middleware' => []], function () {
     // Per-client revenue actions (Cold Call Block, Follow-up Block, etc.)
     Route::get('/clients/{id}/actions', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -2568,7 +3015,7 @@ Route::group(['middleware' => []], function () {
             ->findOrFail($id);
 
         $date = $request->get('date', now()->toDateString());
-        if (!is_string($date) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+        if (! is_string($date) || ! preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
             $date = now()->toDateString();
         }
 
@@ -2610,6 +3057,7 @@ Route::group(['middleware' => []], function () {
         $actions = array_map(function ($item) use ($storedActions) {
             $key = $item['key'];
             $status = $storedActions[$key] ?? null;
+
             return [
                 'key' => $key,
                 'label' => $item['label'],
@@ -2636,7 +3084,9 @@ Route::group(['middleware' => []], function () {
         ];
         $driver = DB::connection()->getDriverName();
         foreach ($storedActions as $actionKey => $status) {
-            if ($status !== 'yes' || !is_string($actionKey)) continue;
+            if ($status !== 'yes' || ! is_string($actionKey)) {
+                continue;
+            }
             $actionLabel = $actionLabels[$actionKey] ?? ucfirst(str_replace('_', ' ', $actionKey));
             $exists = \App\Models\Result::where('user_id', $user->id)
                 ->where('type', 'revenue_action')
@@ -2645,7 +3095,7 @@ Route::group(['middleware' => []], function () {
             $exists = $driver === 'mysql'
                 ? $exists->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(notes, '$.action_key')) = ?", [$actionKey])->exists()
                 : $exists->whereRaw("json_extract(notes, '$.action_key') = ?", [$actionKey])->exists();
-            if (!$exists) {
+            if (! $exists) {
                 try {
                     \App\Models\Result::create([
                         'user_id' => $user->id,
@@ -2659,7 +3109,8 @@ Route::group(['middleware' => []], function () {
                             'parent_client_id' => (int) $id,
                         ]),
                     ]);
-                } catch (\Throwable $e) {}
+                } catch (\Throwable $e) {
+                }
             }
         }
 
@@ -2675,7 +3126,7 @@ Route::group(['middleware' => []], function () {
 
     Route::post('/clients/{id}/actions', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -2703,11 +3154,11 @@ Route::group(['middleware' => []], function () {
         }
 
         $meta['daily_actions'] = $meta['daily_actions'] ?? [];
-        if (!is_array($meta['daily_actions'])) {
+        if (! is_array($meta['daily_actions'])) {
             $meta['daily_actions'] = [];
         }
         $meta['daily_actions'][$date] = $meta['daily_actions'][$date] ?? [];
-        if (!is_array($meta['daily_actions'][$date])) {
+        if (! is_array($meta['daily_actions'][$date])) {
             $meta['daily_actions'][$date] = [];
         }
         $previousStatus = $meta['daily_actions'][$date][$data['action_key']] ?? null;
@@ -2716,7 +3167,7 @@ Route::group(['middleware' => []], function () {
         $client->notes = json_encode($meta);
         $client->save();
 
-        Log::info('[DAILY_LOG_DEBUG] POST /clients/' . $id . '/actions', [
+        Log::info('[DAILY_LOG_DEBUG] POST /clients/'.$id.'/actions', [
             'action_key' => $data['action_key'],
             'status' => $data['status'],
             'date' => $date,
@@ -2758,7 +3209,7 @@ Route::group(['middleware' => []], function () {
                 ? $base->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(notes, '$.action_key')) = ?", [$data['action_key']])->exists()
                 : $base->whereRaw("json_extract(notes, '$.action_key') = ?", [$data['action_key']])->exists();
 
-            if (!$exists) {
+            if (! $exists) {
                 try {
                     $result = \App\Models\Result::create([
                         'user_id' => $user->id,
@@ -2784,14 +3235,14 @@ Route::group(['middleware' => []], function () {
     // ─── Save detailed action log for a client (cold call, site visit, negotiation, referral, deal closed) ───
     Route::post('/clients/{id}/action-log', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
         $data = $request->validate([
             'action_type' => ['required', 'string', 'in:cold_call,site_visit,deal_negotiation,deal_closed,referral_ask'],
-            'date'        => ['sometimes', 'date'],
-            'payload'     => ['required', 'array'],
+            'date' => ['sometimes', 'date'],
+            'payload' => ['required', 'array'],
         ]);
 
         $client = \App\Models\Result::where('user_id', $user->id)
@@ -2806,8 +3257,11 @@ Route::group(['middleware' => []], function () {
         if ($client->notes) {
             try {
                 $decoded = json_decode($client->notes, true);
-                if (is_array($decoded)) $meta = $decoded;
-            } catch (\Throwable $e) {}
+                if (is_array($decoded)) {
+                    $meta = $decoded;
+                }
+            } catch (\Throwable $e) {
+            }
         }
 
         // Store under action_logs -> date -> type (array of entries for that day)
@@ -2825,14 +3279,14 @@ Route::group(['middleware' => []], function () {
 
             if ($dealValue > 0 || $commission > 0) {
                 \App\Models\Result::create([
-                    'user_id'       => $user->id,
-                    'type'          => 'deal_closed',
-                    'client_name'   => $client->client_name,
+                    'user_id' => $user->id,
+                    'type' => 'deal_closed',
+                    'client_name' => $client->client_name,
                     'property_name' => $payload['deal_type'] ?? null,
-                    'value'         => $dealValue,
-                    'notes'         => json_encode([
-                        'deal_type'        => $payload['deal_type'] ?? null,
-                        'commission'       => $commission,
+                    'value' => $dealValue,
+                    'notes' => json_encode([
+                        'deal_type' => $payload['deal_type'] ?? null,
+                        'commission' => $commission,
                         'parent_client_id' => $client->id,
                     ]),
                     'date' => $date,
@@ -2845,14 +3299,14 @@ Route::group(['middleware' => []], function () {
 
         return response()->json([
             'success' => true,
-            'message' => ucfirst(str_replace('_', ' ', $type)) . ' logged successfully',
+            'message' => ucfirst(str_replace('_', ' ', $type)).' logged successfully',
         ]);
     });
 
     // ─── Get activities for a client (for client-specific activity list) ───
     Route::get('/clients/{id}/activities', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -2887,7 +3341,7 @@ Route::group(['middleware' => []], function () {
     // ─── Get action logs for a client on a specific date ───
     Route::get('/clients/{id}/action-logs', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -2901,18 +3355,21 @@ Route::group(['middleware' => []], function () {
         if ($client->notes) {
             try {
                 $decoded = json_decode($client->notes, true);
-                if (is_array($decoded)) $meta = $decoded;
-            } catch (\Throwable $e) {}
+                if (is_array($decoded)) {
+                    $meta = $decoded;
+                }
+            } catch (\Throwable $e) {
+            }
         }
 
         $logs = ($meta['action_logs'] ?? [])[$date] ?? [];
 
         return response()->json([
             'success' => true,
-            'data'    => [
+            'data' => [
                 'client_id' => $id,
-                'date'      => $date,
-                'logs'      => $logs,
+                'date' => $date,
+                'logs' => $logs,
             ],
         ]);
     });
@@ -2920,7 +3377,7 @@ Route::group(['middleware' => []], function () {
     // Log a result (hot lead, deal closed, commission)
     Route::post('/results', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -2946,11 +3403,11 @@ Route::group(['middleware' => []], function () {
         ]);
 
         // Update performance metrics
-        $service = new \App\Services\PerformanceService();
+        $service = new \App\Services\PerformanceService;
         $metric = $service->calculateDailyScore($user);
 
         // Check badges
-        $badgeService = new \App\Services\BadgeService();
+        $badgeService = new \App\Services\BadgeService;
         $newBadges = $badgeService->checkAndAwardBadges($user);
 
         // Update user total commission
@@ -2976,7 +3433,7 @@ Route::group(['middleware' => []], function () {
     // Get results (filterable by type, date range)
     Route::get('/results', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3087,7 +3544,7 @@ Route::group(['middleware' => []], function () {
     // ─── Revenue Tracker key metrics (Week / Month / Quarter) ───
     Route::get('/revenue/metrics', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3123,6 +3580,7 @@ Route::group(['middleware' => []], function () {
             ->get()
             ->sum(function ($r) {
                 $notes = is_string($r->notes) ? json_decode($r->notes, true) : $r->notes;
+
                 return is_array($notes) ? (float) ($notes['commission'] ?? 0) : 0;
             });
         $commissionFromType = (float) \App\Models\Result::where('user_id', $user->id)
@@ -3213,7 +3671,7 @@ Route::group(['middleware' => []], function () {
     // Monthly results graph data
     Route::get('/results/monthly-graph', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3256,7 +3714,7 @@ Route::group(['middleware' => []], function () {
 
     Route::post('/follow-ups', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3288,7 +3746,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/follow-ups', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3328,7 +3786,7 @@ Route::group(['middleware' => []], function () {
 
     Route::put('/follow-ups/{id}/complete', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3340,7 +3798,7 @@ Route::group(['middleware' => []], function () {
         ]);
 
         // Log as a follow_up activity for points
-        $service = new \App\Services\PerformanceService();
+        $service = new \App\Services\PerformanceService;
         $points = $service->getActivityPoints('followUp');
 
         \App\Models\Activity::create([
@@ -3370,14 +3828,14 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/leaderboard', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
         $category = $request->get('category', 'top_realtor');
         $period = $request->get('period', 'weekly');
 
-        $service = new \App\Services\LeaderboardService();
+        $service = new \App\Services\LeaderboardService;
         $data = $service->getLeaderboard($category, $period, $user->id);
 
         return response()->json([
@@ -3404,7 +3862,7 @@ Route::group(['middleware' => []], function () {
 
     // Refresh leaderboards (can be called by admin or cron)
     Route::post('/leaderboard/refresh', function (Request $request) {
-        $service = new \App\Services\LeaderboardService();
+        $service = new \App\Services\LeaderboardService;
         $service->refreshLeaderboards();
 
         return response()->json([
@@ -3417,11 +3875,11 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/badges', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
-        $service = new \App\Services\BadgeService();
+        $service = new \App\Services\BadgeService;
         $badges = $service->getUserBadges($user->id);
 
         $earnedCount = $badges->where('earned', true)->count();
@@ -3440,7 +3898,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/badges/recent', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3462,7 +3920,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/weekly-review', function (Request $request) {
         $user = getAuthUser($request);
-        if (!$user) {
+        if (! $user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3520,4 +3978,3 @@ Route::group(['middleware' => []], function () {
     });
 
 });
-

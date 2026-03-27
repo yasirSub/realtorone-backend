@@ -29,6 +29,9 @@ services:
             DB_DATABASE: realtorone
             DB_USERNAME: sail
             DB_PASSWORD: password
+            FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+            FIREBASE_CREDENTIALS_PATH: ${FIREBASE_CREDENTIALS_PATH:-}
+            FIREBASE_CREDENTIALS_JSON: ${FIREBASE_CREDENTIALS_JSON:-}
         depends_on:
             - mysql
 
