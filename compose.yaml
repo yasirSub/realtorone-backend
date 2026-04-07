@@ -9,6 +9,7 @@ services:
         volumes:
             # Keep only PHP config mount; do NOT mount the whole app in production
             - ./php.ini:/usr/local/etc/php/php.ini:ro
+            - /root/realtorone/backend/storage/app/public/course-assets:/var/www/html/storage/app/public/course-assets
         environment:
             APP_ENV: ${APP_ENV:-production}
             # IMPORTANT: set this in your VPS stack env (keep stable across restarts)
