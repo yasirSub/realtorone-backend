@@ -2451,6 +2451,15 @@ Route::post('/login/google', function (Request $request) {
     $payload = $verify->json();
     $googleEmail = strtolower(trim((string) ($payload['email'] ?? '')));
     $emailVerified = (string) ($payload['email_verified'] ?? '') === 'true';
+    $audience = trim((string) ($payload['aud'] ?? ''));
+    $expectedAudience = trim((string) env('GOOGLE_CLIENT_ID', ''));
+
+    if ($expectedAudience !== '' && $audience !== $expectedAudience) {
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Google token audience mismatch.',
+        ], 401);
+    }
 
     if ($googleEmail === '' || ! $emailVerified) {
         return response()->json([
