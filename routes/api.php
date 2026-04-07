@@ -13,6 +13,7 @@ use App\Models\UserPushToken;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
@@ -2413,6 +2414,86 @@ Route::post('/login', function (Request $request) {
     }
 
     // Generate token
+    $token = bin2hex(random_bytes(32));
+    $user->update(['remember_token' => $token]);
+
+    return response()->json([
+        'status' => 'ok',
+        'token' => $token,
+        'user' => [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+        ],
+    ]);
+});
+
+Route::post('/login/google', function (Request $request) {
+    $data = $request->validate([
+        'id_token' => ['required', 'string'],
+        'email' => ['nullable', 'email'],
+        'name' => ['nullable', 'string', 'max:255'],
+    ]);
+
+    $verify = Http::asForm()
+        ->timeout(15)
+        ->post('https://oauth2.googleapis.com/tokeninfo', [
+            'id_token' => $data['id_token'],
+        ]);
+
+    if (! $verify->ok()) {
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Invalid Google token.',
+        ], 401);
+    }
+
+    $payload = $verify->json();
+    $googleEmail = strtolower(trim((string) ($payload['email'] ?? '')));
+    $emailVerified = (string) ($payload['email_verified'] ?? '') === 'true';
+
+    if ($googleEmail === '' || ! $emailVerified) {
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Google account email is not verified.',
+        ], 401);
+    }
+
+    $name = trim((string) ($payload['name'] ?? ''));
+    if ($name === '') {
+        $name = trim((string) ($data['name'] ?? ''));
+    }
+    if ($name === '') {
+        $name = Str::before($googleEmail, '@');
+    }
+
+    $user = User::whereRaw('LOWER(email) = ?', [$googleEmail])->first();
+    if (! $user) {
+        $user = User::create([
+            'name' => $name,
+            'email' => $googleEmail,
+            'password' => Hash::make(Str::random(40)),
+            'status' => 'active',
+        ]);
+        $user->email_verified_at = now();
+        $user->save();
+    } else {
+        if (trim((string) $user->name) === '' && $name !== '') {
+            $user->name = $name;
+        }
+        if (! $user->email_verified_at) {
+            $user->email_verified_at = now();
+        }
+        $user->save();
+    }
+
+    if ($user->status === 'inactive') {
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Your account is deactivated. Contact support for recovery.',
+        ], 403);
+    }
+
     $token = bin2hex(random_bytes(32));
     $user->update(['remember_token' => $token]);
 
