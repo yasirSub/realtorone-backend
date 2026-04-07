@@ -9,7 +9,63 @@ use Illuminate\Support\Facades\Storage;
 class BackupController extends Controller
 {
     /**
-     * Generate and download a full backup (Database + Course Assets)
+     * List all stored backups
+     */
+    public function index()
+    {
+        $backupDir = storage_path('app/backups');
+        if (!is_dir($backupDir)) {
+            mkdir($backupDir, 0755, true);
+        }
+
+        $files = array_filter(scandir($backupDir), function($file) use ($backupDir) {
+            return is_file($backupDir . '/' . $file) && str_ends_with($file, '.zip');
+        });
+
+        $backups = array_map(function($file) use ($backupDir) {
+            return [
+                'name' => $file,
+                'size' => filesize($backupDir . '/' . $file),
+                'created_at' => filemtime($backupDir . '/' . $file),
+            ];
+        }, array_values($files));
+
+        // Sort by newest first
+        usort($backups, fn($a, $b) => $b['created_at'] - $a['created_at']);
+
+        return response()->json([
+            'success' => true,
+            'data' => $backups
+        ]);
+    }
+
+    /**
+     * Download a specific backup file
+     */
+    public function download($filename)
+    {
+        $path = storage_path('app/backups/' . $filename);
+        if (!file_exists($path)) {
+            return response()->json(['success' => false, 'message' => 'File not found'], 404);
+        }
+        return response()->download($path);
+    }
+
+    /**
+     * Delete a specific backup file
+     */
+    public function destroy($filename)
+    {
+        $path = storage_path('app/backups/' . $filename);
+        if (file_exists($path)) {
+            unlink($path);
+            return response()->json(['success' => true, 'message' => 'Backup deleted']);
+        }
+        return response()->json(['success' => false, 'message' => 'File not found'], 404);
+    }
+
+    /**
+     * Generate a new backup and store it
      */
     public function export(Request $request)
     {
@@ -24,16 +80,16 @@ class BackupController extends Controller
         $tag = ($includeDb && $includeMedia) ? 'full' : ($includeDb ? 'db' : ($includeMedia ? 'media' : 'partial'));
         $backupName = 'realtorone_' . $tag . '_backup_' . date('Y-m-d_H-i-s') . '.zip';
         $tempDir = storage_path('app/temp_backup');
+        $backupDir = storage_path('app/backups');
         
-        if (!file_exists($tempDir)) {
-            mkdir($tempDir, 0755, true);
-        }
+        if (!file_exists($tempDir)) mkdir($tempDir, 0755, true);
+        if (!file_exists($backupDir)) mkdir($backupDir, 0755, true);
 
         $sqlFile = $tempDir . '/database.sql';
-        $zipFile = storage_path('app/' . $backupName);
+        $zipFile = $backupDir . '/' . $backupName;
 
         try {
-            // 1. Export Database if requested
+            set_time_limit(300); // 5 minutes for large assets
             if ($includeDb) {
                 $command = sprintf(
                     'mysqldump --ssl=0 --no-tablespaces --host=%s --user=%s --password=%s %s > %s',
@@ -43,52 +99,40 @@ class BackupController extends Controller
                     escapeshellarg($database),
                     escapeshellarg($sqlFile)
                 );
-                
                 exec($command, $output, $returnVar);
-                if ($returnVar !== 0) {
-                    throw new \Exception('Database dump failed. Make sure mysql-client is installed.');
-                }
+                if ($returnVar !== 0) throw new \Exception('Database dump failed.');
             }
 
-            // 2. Create ZIP
-            // Start with an empty zip command
             $zipArgs = [];
-            if ($includeMedia) {
-                // Add the public directory (media)
-                $zipArgs[] = 'zip -r ' . escapeshellarg($zipFile) . ' public';
-            }
-            if ($includeDb) {
-                // Add the SQL file
-                $zipArgs[] = 'zip -j ' . escapeshellarg($zipFile) . ' ' . escapeshellarg($sqlFile);
-            }
+            if ($includeMedia) $zipArgs[] = 'zip -r ' . escapeshellarg($zipFile) . ' public';
+            if ($includeDb) $zipArgs[] = 'zip -j ' . escapeshellarg($zipFile) . ' ' . escapeshellarg($sqlFile);
 
-            if (empty($zipArgs)) {
-                throw new \Exception('Nothing selected for backup.');
-            }
+            if (empty($zipArgs)) throw new \Exception('Nothing selected for backup.');
 
             $zipCommand = 'cd ' . escapeshellarg(storage_path('app')) . ' && ' . implode(' && ', $zipArgs);
-
             exec($zipCommand, $output, $returnVar);
-            if ($returnVar !== 0) {
-                throw new \Exception('Zipping failed. Make sure zip is installed.');
-            }
+            if ($returnVar !== 0) throw new \Exception('Zipping failed.');
 
-            // 3. Clean up SQL file and temp dir
             if (file_exists($sqlFile)) unlink($sqlFile);
             if (is_dir($tempDir)) rmdir($tempDir);
 
-            // 4. Return the file for download
-            return response()->download($zipFile)->deleteFileAfterSend(true);
+            // Return success with file info, frontend will initiate download if needed
+            return response()->json([
+                'success' => true,
+                'message' => 'Backup created successfully',
+                'data' => [
+                    'name' => $backupName,
+                    'size' => filesize($zipFile),
+                    'created_at' => filemtime($zipFile)
+                ]
+            ]);
 
         } catch (\Exception $e) {
             if (file_exists($sqlFile)) unlink($sqlFile);
             if (is_dir($tempDir)) rmdir($tempDir);
             if (file_exists($zipFile)) unlink($zipFile);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'Backup failed: ' . $e->getMessage()
-            ], 500);
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
 

@@ -23,6 +23,8 @@ class User extends Authenticatable
         'email',
         'password',
         'remember_token',
+        'status',
+        'deletion_requested_at',
         // Profile fields
         'mobile',
         'city',
@@ -81,6 +83,7 @@ class User extends Authenticatable
             'has_completed_diagnosis' => 'boolean',
             'is_premium' => 'boolean',
             'premium_expires_at' => 'datetime',
+            'deletion_requested_at' => 'datetime',
             'diagnosis_scores' => 'array',
             'years_experience' => 'integer',
             'current_monthly_income' => 'decimal:2',

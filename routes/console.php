@@ -10,3 +10,5 @@ Artisan::command('inspire', function () {
 
 Schedule::command('notifications:process-scheduled')->everyMinute();
 Schedule::command('notifications:missed-activity')->dailyAt('09:00');
+Schedule::command('notifications:lead-reminders')->dailyAt('10:00');
+Schedule::command('leads:sync-excel')->everyMinute();

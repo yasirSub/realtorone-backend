@@ -1,6 +1,13 @@
 <?php
 
 use App\Http\Controllers\Admin\NotificationBroadcastController;
+use App\Support\ClientMeetingFlow;
+use App\Support\ColdCallingFlow;
+use App\Support\CrmPipeline;
+use App\Support\DealClosureFlow;
+use App\Support\DealNegotiationFlow;
+use App\Support\FollowUpFlow;
+use App\Models\LegalDocument;
 use App\Models\User;
 use App\Models\UserPushToken;
 use Illuminate\Http\Request;
@@ -95,6 +102,88 @@ Route::get('/health', function () {
     ]);
 });
 
+/** Public legal documents (mobile WebView + website). */
+Route::get('/legal-documents/{slug}', function (string $slug) {
+    if (! in_array($slug, ['privacy', 'terms'], true)) {
+        return response()->json(['success' => false, 'message' => 'Not found'], 404);
+    }
+    $doc = LegalDocument::query()->where('slug', $slug)->first();
+    if (! $doc) {
+        return response()->json(['success' => false, 'message' => 'Not found'], 404);
+    }
+
+    return response()->json([
+        'success' => true,
+        'slug' => $doc->slug,
+        'title' => $doc->title,
+        'html' => $doc->body_html,
+        'updated_at' => $doc->updated_at?->toIso8601String(),
+    ]);
+});
+
+Route::get('/admin/legal-documents', function (Request $request) {
+    $admin = getAuthUser($request);
+    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+    $rows = LegalDocument::query()
+        ->orderBy('slug')
+        ->get(['slug', 'title', 'updated_at']);
+
+    return response()->json(['success' => true, 'data' => $rows]);
+});
+
+Route::get('/admin/legal-documents/{slug}', function (Request $request, string $slug) {
+    $admin = getAuthUser($request);
+    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+    if (! in_array($slug, ['privacy', 'terms'], true)) {
+        return response()->json(['success' => false, 'message' => 'Invalid slug'], 404);
+    }
+    $doc = LegalDocument::query()->where('slug', $slug)->firstOrFail();
+
+    return response()->json([
+        'success' => true,
+        'data' => [
+            'slug' => $doc->slug,
+            'title' => $doc->title,
+            'body_html' => $doc->body_html,
+            'updated_at' => $doc->updated_at?->toIso8601String(),
+        ],
+    ]);
+});
+
+Route::put('/admin/legal-documents/{slug}', function (Request $request, string $slug) {
+    $admin = getAuthUser($request);
+    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+    if (! in_array($slug, ['privacy', 'terms'], true)) {
+        return response()->json(['success' => false, 'message' => 'Invalid slug'], 404);
+    }
+    $data = $request->validate([
+        'title' => ['sometimes', 'string', 'max:255'],
+        'body_html' => ['required', 'string', 'max:500000'],
+    ]);
+    $html = $data['body_html'];
+    $html = preg_replace('#<\s*script\b[^>]*>.*?<\s*/\s*script\s*>#is', '', $html) ?? $html;
+    $doc = LegalDocument::query()->where('slug', $slug)->firstOrFail();
+    $doc->title = $data['title'] ?? $doc->title;
+    $doc->body_html = $html;
+    $doc->save();
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Legal document updated.',
+        'data' => [
+            'slug' => $doc->slug,
+            'title' => $doc->title,
+            'updated_at' => $doc->updated_at?->toIso8601String(),
+        ],
+    ]);
+});
+
 // Reven chatbot
 Route::post('/chat', [\App\Http\Controllers\ChatController::class, 'send']);
 Route::get('/chat/history', [\App\Http\Controllers\ChatController::class, 'history']);
@@ -142,6 +231,347 @@ Route::get('/admin/ai/users', function (Request $request) {
     return response()->json(['success' => true, 'data' => $users]);
 });
 
+// Admin: AI runtime settings (API key + custom knowledge base text)
+Route::get('/admin/ai/settings', function (Request $request) {
+    $admin = getAuthUser($request);
+    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+
+    $apiKey = (string) cache('ai_openai_api_key', '');
+    $knowledgeBase = (string) cache('ai_custom_knowledge_base', '');
+    $kbBlocksRaw = (string) cache('ai_kb_blocks', '[]');
+    $kbBlocks = json_decode($kbBlocksRaw, true);
+    if (! is_array($kbBlocks)) {
+        $kbBlocks = [];
+    }
+    $behavior = (string) cache('ai_behavior_instructions', '');
+    $provider = (string) cache('ai_provider', 'openai');
+    $model = (string) cache('ai_openai_model', 'gpt-4o-mini');
+    $baseUrl = (string) cache('ai_openai_base_url', '');
+    $useCustomKb = (bool) cache('ai_use_custom_kb', true);
+    $useCourseKb = (bool) cache('ai_use_course_kb', true);
+    $allowConsultant = (bool) cache('ai_allow_consultant', true);
+    $allowRainmaker = (bool) cache('ai_allow_rainmaker', true);
+    $allowTitan = (bool) cache('ai_allow_titan', true);
+
+    return response()->json([
+        'success' => true,
+        'data' => [
+            'provider' => $provider,
+            'model' => $model,
+            'base_url' => $baseUrl,
+            'api_key' => $apiKey,
+            'has_api_key' => $apiKey !== '',
+            'knowledge_base' => $knowledgeBase,
+            'kb_blocks' => $kbBlocks,
+            'behavior' => $behavior,
+            'kb_sources' => [
+                'custom' => $useCustomKb,
+                'courses' => $useCourseKb,
+            ],
+            'tier_allow' => [
+                'Consultant' => $allowConsultant,
+                'Rainmaker' => $allowRainmaker,
+                'Titan' => $allowTitan,
+            ],
+        ],
+    ]);
+});
+
+Route::post('/admin/ai/settings', function (Request $request) {
+    $admin = getAuthUser($request);
+    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+
+    $validated = $request->validate([
+        'provider' => 'nullable|string|in:openai,openrouter,groq,together,deepseek,mistral,fireworks,xai,disabled',
+        'model' => 'nullable|string|max:80',
+        'base_url' => 'nullable|string|max:300',
+        'api_key' => 'nullable|string|max:500',
+        'knowledge_base' => 'nullable|string|max:200000',
+        'kb_blocks' => 'nullable|array',
+        'kb_blocks.*.id' => 'nullable|string|max:60',
+        'kb_blocks.*.title' => 'nullable|string|max:120',
+        'kb_blocks.*.content' => 'nullable|string|max:200000',
+        'kb_blocks.*.enabled' => 'nullable|boolean',
+        'behavior' => 'nullable|string|max:20000',
+        'kb_sources' => 'nullable|array',
+        'kb_sources.custom' => 'nullable|boolean',
+        'kb_sources.courses' => 'nullable|boolean',
+        'tier_allow' => 'nullable|array',
+        'tier_allow.Consultant' => 'nullable|boolean',
+        'tier_allow.Rainmaker' => 'nullable|boolean',
+        'tier_allow.Titan' => 'nullable|boolean',
+    ]);
+
+    $provider = trim((string) ($validated['provider'] ?? 'openai'));
+    if ($provider === '') {
+        $provider = 'openai';
+    }
+    $model = trim((string) ($validated['model'] ?? 'gpt-4o-mini'));
+    if ($model === '') {
+        $model = 'gpt-4o-mini';
+    }
+    $baseUrl = trim((string) ($validated['base_url'] ?? ''));
+    $apiKey = trim((string) ($validated['api_key'] ?? ''));
+    $knowledgeBase = trim((string) ($validated['knowledge_base'] ?? ''));
+    $behavior = trim((string) ($validated['behavior'] ?? ''));
+    $kbBlocks = is_array($validated['kb_blocks'] ?? null) ? $validated['kb_blocks'] : null;
+    $kbSources = is_array($validated['kb_sources'] ?? null) ? $validated['kb_sources'] : [];
+    $tierAllow = is_array($validated['tier_allow'] ?? null) ? $validated['tier_allow'] : [];
+
+    cache(['ai_provider' => $provider], now()->addYears(5));
+    cache(['ai_openai_model' => $model], now()->addYears(5));
+    cache(['ai_openai_base_url' => $baseUrl], now()->addYears(5));
+    cache(['ai_openai_api_key' => $apiKey], now()->addYears(5));
+    cache(['ai_custom_knowledge_base' => $knowledgeBase], now()->addYears(5));
+    cache(['ai_behavior_instructions' => $behavior], now()->addYears(5));
+    if ($kbBlocks !== null) {
+        // Keep the payload small/safe. Only store expected keys.
+        $clean = [];
+        foreach ($kbBlocks as $b) {
+            if (! is_array($b)) continue;
+            $id = trim((string) ($b['id'] ?? ''));
+            $title = trim((string) ($b['title'] ?? ''));
+            $content = trim((string) ($b['content'] ?? ''));
+            $enabled = (bool) ($b['enabled'] ?? true);
+            if ($id === '') {
+                $id = (string) \Illuminate\Support\Str::uuid();
+            }
+            if ($title === '' && $content === '') continue;
+            $clean[] = [
+                'id' => mb_substr($id, 0, 60),
+                'title' => mb_substr($title, 0, 120),
+                'content' => mb_substr($content, 0, 200000),
+                'enabled' => $enabled,
+            ];
+        }
+        cache(['ai_kb_blocks' => json_encode($clean)], now()->addYears(5));
+    }
+    if (array_key_exists('custom', $kbSources)) {
+        cache(['ai_use_custom_kb' => (bool) $kbSources['custom']], now()->addYears(5));
+    }
+    if (array_key_exists('courses', $kbSources)) {
+        cache(['ai_use_course_kb' => (bool) $kbSources['courses']], now()->addYears(5));
+    }
+    if (array_key_exists('Consultant', $tierAllow)) {
+        cache(['ai_allow_consultant' => (bool) $tierAllow['Consultant']], now()->addYears(5));
+    }
+    if (array_key_exists('Rainmaker', $tierAllow)) {
+        cache(['ai_allow_rainmaker' => (bool) $tierAllow['Rainmaker']], now()->addYears(5));
+    }
+    if (array_key_exists('Titan', $tierAllow)) {
+        cache(['ai_allow_titan' => (bool) $tierAllow['Titan']], now()->addYears(5));
+    }
+
+    return response()->json([
+        'success' => true,
+        'message' => 'AI inbox settings updated.',
+        'data' => [
+            'provider' => $provider,
+            'model' => $model,
+            'base_url' => $baseUrl,
+            'has_api_key' => $apiKey !== '',
+            'knowledge_base' => $knowledgeBase,
+            'kb_blocks' => json_decode((string) cache('ai_kb_blocks', '[]'), true) ?: [],
+            'behavior' => (string) cache('ai_behavior_instructions', ''),
+            'kb_sources' => [
+                'custom' => (bool) cache('ai_use_custom_kb', true),
+                'courses' => (bool) cache('ai_use_course_kb', true),
+            ],
+            'tier_allow' => [
+                'Consultant' => (bool) cache('ai_allow_consultant', true),
+                'Rainmaker' => (bool) cache('ai_allow_rainmaker', true),
+                'Titan' => (bool) cache('ai_allow_titan', true),
+            ],
+        ],
+    ]);
+});
+
+Route::post('/admin/ai/settings/knowledge-base-pdf', function (Request $request) {
+    $admin = getAuthUser($request);
+    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+
+    $validated = $request->validate([
+        'pdf' => 'required|file|mimetypes:application/pdf|max:10240',
+        'mode' => 'nullable|string|in:append,replace',
+        'title' => 'nullable|string|max:120',
+    ]);
+
+    $mode = (string) ($validated['mode'] ?? 'append');
+    $file = $request->file('pdf');
+    if (! $file) {
+        return response()->json(['success' => false, 'message' => 'Missing file'], 422);
+    }
+
+    try {
+        $parser = new \Smalot\PdfParser\Parser();
+        $pdf = $parser->parseFile($file->getRealPath());
+        $text = trim((string) $pdf->getText());
+        $text = preg_replace('/[ \t]+/', ' ', $text);
+        $text = preg_replace("/\n{3,}/", "\n\n", $text);
+        $text = trim((string) $text);
+    } catch (\Throwable $e) {
+        \Illuminate\Support\Facades\Log::error('KB PDF parse failed', ['error' => $e->getMessage()]);
+        return response()->json(['success' => false, 'message' => 'Could not parse PDF.'], 422);
+    }
+
+    if ($text === '') {
+        return response()->json(['success' => false, 'message' => 'PDF text was empty.'], 422);
+    }
+
+    // Safety cap: keep KB within route validation limit.
+    $text = mb_substr($text, 0, 160000);
+    $filename = (string) ($file->getClientOriginalName() ?: 'knowledge.pdf');
+    $title = trim((string) ($validated['title'] ?? ''));
+    if ($title === '') {
+        $title = $filename;
+    }
+    $block = "PDF KB Source: {$filename}\n\n".$text;
+
+    $existing = trim((string) cache('ai_custom_knowledge_base', ''));
+    $next = $mode === 'replace' ? $block : trim($existing."\n\n---\n\n".$block);
+    if (mb_strlen($next) > 200000) {
+        $next = mb_substr($next, 0, 200000);
+    }
+
+    cache(['ai_custom_knowledge_base' => $next], now()->addYears(5));
+
+    // Also store as a separate KB block so admin can manage many datasets.
+    $kbBlocksRaw = (string) cache('ai_kb_blocks', '[]');
+    $kbBlocks = json_decode($kbBlocksRaw, true);
+    if (! is_array($kbBlocks)) {
+        $kbBlocks = [];
+    }
+    if ($mode === 'replace') {
+        $kbBlocks = [];
+    }
+    $kbBlocks[] = [
+        'id' => (string) \Illuminate\Support\Str::uuid(),
+        'title' => mb_substr($title, 0, 120),
+        'content' => mb_substr($block, 0, 200000),
+        'enabled' => true,
+    ];
+    cache(['ai_kb_blocks' => json_encode($kbBlocks)], now()->addYears(5));
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Knowledge base updated from PDF.',
+        'data' => [
+            'knowledge_base' => $next,
+            'kb_blocks' => $kbBlocks,
+        ],
+    ]);
+});
+
+Route::post('/admin/ai/settings/kb-block/{blockId}/pdf', function (Request $request, string $blockId) {
+    $admin = getAuthUser($request);
+    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+
+    $validated = $request->validate([
+        'pdf' => 'required|file|mimetypes:application/pdf|max:10240',
+        'title' => 'nullable|string|max:120',
+    ]);
+
+    $file = $request->file('pdf');
+    if (! $file) {
+        return response()->json(['success' => false, 'message' => 'Missing file'], 422);
+    }
+
+    try {
+        $parser = new \Smalot\PdfParser\Parser();
+        $pdf = $parser->parseFile($file->getRealPath());
+        $text = trim((string) $pdf->getText());
+        $text = preg_replace('/[ \t]+/', ' ', $text);
+        $text = preg_replace("/\n{3,}/", "\n\n", $text);
+        $text = trim((string) $text);
+    } catch (\Throwable $e) {
+        \Illuminate\Support\Facades\Log::error('KB block PDF parse failed', ['error' => $e->getMessage()]);
+        return response()->json(['success' => false, 'message' => 'Could not parse PDF.'], 422);
+    }
+
+    if ($text === '') {
+        return response()->json(['success' => false, 'message' => 'PDF text was empty.'], 422);
+    }
+
+    $text = mb_substr($text, 0, 160000);
+    $filename = (string) ($file->getClientOriginalName() ?: 'knowledge.pdf');
+    $title = trim((string) ($validated['title'] ?? ''));
+    if ($title === '') {
+        $title = $filename;
+    }
+    $blockContent = "PDF KB Source: {$filename}\n\n".$text;
+
+    $kbBlocksRaw = (string) cache('ai_kb_blocks', '[]');
+    $kbBlocks = json_decode($kbBlocksRaw, true);
+    if (! is_array($kbBlocks)) {
+        $kbBlocks = [];
+    }
+
+    $found = false;
+    foreach ($kbBlocks as &$b) {
+        if (! is_array($b)) continue;
+        if ((string) ($b['id'] ?? '') !== $blockId) continue;
+        $b['title'] = mb_substr($title, 0, 120);
+        $b['content'] = mb_substr($blockContent, 0, 200000);
+        $b['enabled'] = (bool) ($b['enabled'] ?? true);
+        $found = true;
+        break;
+    }
+    unset($b);
+
+    if (! $found) {
+        return response()->json(['success' => false, 'message' => 'Dataset not found'], 404);
+    }
+
+    cache(['ai_kb_blocks' => json_encode($kbBlocks)], now()->addYears(5));
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Dataset updated from PDF.',
+        'data' => [
+            'kb_blocks' => $kbBlocks,
+        ],
+    ]);
+});
+
+Route::delete('/admin/ai/settings/kb-block/{blockId}', function (Request $request, string $blockId) {
+    $admin = getAuthUser($request);
+    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+
+    $kbBlocksRaw = (string) cache('ai_kb_blocks', '[]');
+    $kbBlocks = json_decode($kbBlocksRaw, true);
+    if (! is_array($kbBlocks)) {
+        $kbBlocks = [];
+    }
+
+    $before = count($kbBlocks);
+    $kbBlocks = array_values(array_filter($kbBlocks, fn ($b) => ! (is_array($b) && (string) ($b['id'] ?? '') === $blockId)));
+    $after = count($kbBlocks);
+
+    if ($after === $before) {
+        return response()->json(['success' => false, 'message' => 'Dataset not found'], 404);
+    }
+
+    cache(['ai_kb_blocks' => json_encode($kbBlocks)], now()->addYears(5));
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Dataset deleted.',
+        'data' => [
+            'kb_blocks' => $kbBlocks,
+        ],
+    ]);
+});
+
 Route::get('/admin/ai/users/{userId}/sessions', function (Request $request, int $userId) {
     $admin = getAuthUser($request);
     if (! $admin || $admin->email !== 'admin@realtorone.com') {
@@ -157,6 +587,40 @@ Route::get('/admin/ai/users/{userId}/sessions', function (Request $request, int 
     return response()->json(['success' => true, 'data' => $sessions]);
 });
 
+Route::get('/admin/ai/users/{userId}/usage', function (Request $request, int $userId) {
+    $admin = getAuthUser($request);
+    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+
+    $todayStart = now()->startOfDay();
+
+    $todayAgg = DB::table('chat_messages')
+        ->join('chat_sessions', 'chat_sessions.id', '=', 'chat_messages.chat_session_id')
+        ->where('chat_sessions.user_id', $userId)
+        ->where('chat_messages.role', 'assistant')
+        ->where('chat_messages.created_at', '>=', $todayStart)
+        ->selectRaw('COALESCE(SUM(chat_messages.total_tokens), 0) as total_tokens, COUNT(*) as ai_calls')
+        ->first();
+
+    $totalAgg = DB::table('chat_messages')
+        ->join('chat_sessions', 'chat_sessions.id', '=', 'chat_messages.chat_session_id')
+        ->where('chat_sessions.user_id', $userId)
+        ->where('chat_messages.role', 'assistant')
+        ->selectRaw('COALESCE(SUM(chat_messages.total_tokens), 0) as total_tokens, COUNT(*) as ai_calls')
+        ->first();
+
+    return response()->json([
+        'success' => true,
+        'data' => [
+            'ai_tokens_today' => (int) ($todayAgg->total_tokens ?? 0),
+            'ai_calls_today' => (int) ($todayAgg->ai_calls ?? 0),
+            'ai_tokens_total' => (int) ($totalAgg->total_tokens ?? 0),
+            'ai_calls_total' => (int) ($totalAgg->ai_calls ?? 0),
+        ],
+    ]);
+});
+
 Route::get('/admin/ai/sessions/{sessionId}/messages', function (Request $request, int $sessionId) {
     $admin = getAuthUser($request);
     if (! $admin || $admin->email !== 'admin@realtorone.com') {
@@ -170,6 +634,9 @@ Route::get('/admin/ai/sessions/{sessionId}/messages', function (Request $request
 
     return response()->json(['success' => true, 'data' => $messages]);
 });
+
+// Admin: send a message as a user (for testing / replying from the center panel)
+Route::post('/admin/ai/users/{userId}/send', [\App\Http\Controllers\ChatController::class, 'adminSendForUser']);
 
 // Admin: enabled AI KB courses for a user (based on user's membership tier)
 Route::get('/admin/ai/users/{userId}/kb', function (Request $request, int $userId) {
@@ -253,7 +720,7 @@ Route::post('/admin/ai/tickets/{ticketId}/resolve', function (Request $request, 
 
     $ticket->admin_resolution = $validated['admin_resolution'];
     $ticket->status = 'resolved';
-    $ticket->resolved_at = now();
+    $ticket->resolved_at = \Illuminate\Support\Carbon::now();
     $ticket->save();
 
     return response()->json(['success' => true, 'data' => $ticket]);
@@ -271,17 +738,25 @@ Route::get('/admin/stats', function () {
         } catch (\Throwable $e) {
         }
 
+        $pendingDeletion = 0;
+        try {
+            $pendingDeletion = \App\Models\User::whereNotNull('deletion_requested_at')->count();
+        } catch (\Throwable $e) {
+        }
+
         return response()->json([
             'total_users' => $userCount,
             'active_today' => $activeToday,
             'total_activities' => $activityCount,
             'db_connected' => true,
+            'pending_deletion_requests' => $pendingDeletion,
         ]);
     } catch (\Throwable $e) {
         return response()->json([
             'total_users' => 0,
             'total_activities' => 0,
             'db_connected' => false,
+            'pending_deletion_requests' => 0,
             'error' => $e->getMessage(),
         ]);
     }
@@ -326,7 +801,11 @@ Route::get('/admin/users', function () {
 
 Route::post('/admin/users/{id}/toggle-status', function ($id) {
     $user = \App\Models\User::findOrFail($id);
-    $user->status = ($user->status === 'inactive') ? 'active' : 'inactive';
+    $newStatus = ($user->status === 'inactive') ? 'active' : 'inactive';
+    $user->status = $newStatus;
+    if ($newStatus === 'active') {
+        $user->deletion_requested_at = null;
+    }
     $user->save();
 
     return response()->json(['status' => 'ok', 'new_status' => $user->status]);
@@ -407,6 +886,68 @@ Route::get('/admin/users/{id}/revenue-metrics', function ($id) {
             'top_source' => $topSource,
             'recent_activity' => $recentActivity,
         ],
+    ]);
+});
+
+/** Admin: upload Deal Room–format .xlsx for a practitioner’s account (hot_lead upserts). */
+Route::post('/admin/users/{userId}/import-excel', function (Request $request, $userId) {
+    $auth = getAuthUser($request);
+    if (! $auth) {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+    if (strtolower((string) $auth->email) !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Admin access required'], 403);
+    }
+
+    $target = User::findOrFail((int) $userId);
+
+    $request->validate([
+        'file' => ['required', 'file', 'max:15360'],
+    ]);
+
+    $file = $request->file('file');
+    $ext = strtolower($file->getClientOriginalExtension() ?? '');
+    if ($ext !== 'xlsx') {
+        return response()->json(['success' => false, 'message' => 'Please upload an Excel .xlsx file.'], 422);
+    }
+
+    $path = $file->getRealPath();
+    if (! $path || ! is_readable($path)) {
+        return response()->json(['success' => false, 'message' => 'Could not read the uploaded file.'], 422);
+    }
+
+    try {
+        $stats = \App\Support\DealRoomExcelImport::importFromFilePath($target->id, $path);
+    } catch (\Throwable $e) {
+        Log::error('admin/users/import-excel failed', [
+            'admin_id' => $auth->id,
+            'target_user_id' => $target->id,
+            'error' => $e->getMessage(),
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Could not read this spreadsheet. Use the Deal Room template and try again.',
+        ], 422);
+    }
+
+    $msg = sprintf(
+        'Added %d client(s), updated %d for %s.',
+        $stats['created'],
+        $stats['updated'],
+        $target->name ?? ('user #'.$target->id)
+    );
+    if ($stats['skipped'] > 0) {
+        $msg .= sprintf(' Skipped %d row(s) with no name.', $stats['skipped']);
+    }
+    $msg = \App\Support\DealRoomExcelImport::appendNoRowsHint($msg, $stats);
+
+    return response()->json([
+        'success' => true,
+        'message' => $msg,
+        'created' => $stats['created'],
+        'updated' => $stats['updated'],
+        'skipped' => $stats['skipped'],
     ]);
 });
 
@@ -1864,6 +2405,13 @@ Route::post('/login', function (Request $request) {
         ], 401);
     }
 
+    if ($user->status === 'inactive') {
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Your account is deactivated. Contact support for recovery.',
+        ], 403);
+    }
+
     // Generate token
     $token = bin2hex(random_bytes(32));
     $user->update(['remember_token' => $token]);
@@ -2111,6 +2659,30 @@ Route::group(['middleware' => []], function () {
         return response()->json([
             'success' => true,
             'message' => 'Profile setup completed',
+        ]);
+    });
+
+    Route::post('/user/request-deletion', function (Request $request) {
+        $user = getAuthUser($request);
+        if (! $user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        // Deactivate user and record timestamp for admin panel / compliance queue
+        $user->update([
+            'status' => 'inactive',
+            'remember_token' => null,
+            'deletion_requested_at' => now(),
+        ]);
+        Log::warning("Account deletion requested from mobile app", [
+            'user_id' => $user->id,
+            'email' => $user->email,
+            'deletion_requested_at' => $user->deletion_requested_at?->toIso8601String(),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Account deletion requested successfully.',
         ]);
     });
 
@@ -2907,6 +3479,22 @@ Route::group(['middleware' => []], function () {
             'status' => ['sometimes', 'string', 'in:active,converted,lost'],
         ]);
 
+        $decoded = [];
+        if (! empty($data['notes'])) {
+            $decoded = json_decode($data['notes'], true) ?: [];
+        }
+        if (! isset($decoded['lead_stage']) || $decoded['lead_stage'] === '' || $decoded['lead_stage'] === null) {
+            $decoded['lead_stage'] = 'cold calling';
+        } else {
+            $decoded['lead_stage'] = CrmPipeline::normalizeLeadStageString($decoded['lead_stage']) ?? $decoded['lead_stage'];
+        }
+        if (! isset($decoded['crm_started_at'])) {
+            $decoded['crm_started_at'] = now()->toIso8601String();
+        }
+        if (! isset($decoded['cold_calling']) || ! is_array($decoded['cold_calling'])) {
+            $decoded['cold_calling'] = ColdCallingFlow::defaultState();
+        }
+
         $result = \App\Models\Result::create([
             'user_id' => $user->id,
             'date' => now()->toDateString(),
@@ -2916,7 +3504,7 @@ Route::group(['middleware' => []], function () {
             'source' => $data['source'] ?? null,
             'value' => $data['value'] ?? 0,
             'status' => $data['status'] ?? 'active',
-            'notes' => $data['notes'] ?? null,
+            'notes' => json_encode($decoded),
         ]);
 
         return response()->json([
@@ -2924,6 +3512,708 @@ Route::group(['middleware' => []], function () {
             'message' => 'Client created',
             'data' => $result,
         ], 201);
+    });
+
+    /** Upload Deal Room–format .xlsx; upserts hot_lead clients for the authenticated user. */
+    Route::post('/clients/import-excel', function (Request $request) {
+        $user = getAuthUser($request);
+        if (! $user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $request->validate([
+            'file' => ['required', 'file', 'max:15360'],
+        ]);
+
+        $file = $request->file('file');
+        $ext = strtolower($file->getClientOriginalExtension() ?? '');
+        if ($ext !== 'xlsx') {
+            return response()->json(['success' => false, 'message' => 'Please upload an Excel .xlsx file.'], 422);
+        }
+
+        $path = $file->getRealPath();
+        if (! $path || ! is_readable($path)) {
+            return response()->json(['success' => false, 'message' => 'Could not read the uploaded file.'], 422);
+        }
+
+        try {
+            $stats = \App\Support\DealRoomExcelImport::importFromFilePath($user->id, $path);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('clients/import-excel failed', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Could not read this spreadsheet. Use the app template and try again.',
+            ], 422);
+        }
+
+        $msg = sprintf(
+            'Added %d client(s), updated %d.',
+            $stats['created'],
+            $stats['updated']
+        );
+        if ($stats['skipped'] > 0) {
+            $msg .= sprintf(' Skipped %d row(s) with no name.', $stats['skipped']);
+        }
+        $msg = \App\Support\DealRoomExcelImport::appendNoRowsHint($msg, $stats);
+
+        return response()->json([
+            'success' => true,
+            'message' => $msg,
+            'created' => $stats['created'],
+            'updated' => $stats['updated'],
+            'skipped' => $stats['skipped'],
+        ]);
+    });
+
+    /**
+     * Cold-calling flowchart: log mode (call/whatsapp), result, optional next contact schedule.
+     */
+    Route::post('/clients/{id}/cold-calling/touch', function (Request $request, $id) {
+        $user = getAuthUser($request);
+        if (! $user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $data = $request->validate([
+            'mode' => ['required', 'string', 'in:call,whatsapp'],
+            'result' => ['required', 'string', 'in:interested,exploring,not_interested,no_answer,no_reply'],
+            'schedule' => ['sometimes', 'string', 'in:tomorrow,plus_2_days,custom'],
+            'next_contact_date' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
+        ]);
+
+        $client = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->findOrFail($id);
+
+        $meta = [];
+        if ($client->notes) {
+            try {
+                $decoded = json_decode($client->notes, true);
+                if (is_array($decoded)) {
+                    $meta = CrmPipeline::normalizeNotesMeta($decoded);
+                }
+            } catch (\Throwable $e) {
+            }
+        }
+
+        try {
+            if (($data['mode'] === 'call' && $data['result'] === 'no_reply')
+                || ($data['mode'] === 'whatsapp' && $data['result'] === 'no_answer')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Use no_answer for calls and no_reply for WhatsApp.',
+                ], 422);
+            }
+
+            $out = ColdCallingFlow::applyTouch($meta, $data);
+            $meta = $out['meta'];
+            if ($out['advanced_to_follow_up']) {
+                $meta['follow_up'] = array_merge(
+                    FollowUpFlow::defaultState(),
+                    is_array($meta['follow_up'] ?? null) ? $meta['follow_up'] : []
+                );
+            }
+            $date = now()->toDateString();
+
+            if ($out['advanced_to_follow_up']) {
+                $meta['daily_actions'] = $meta['daily_actions'] ?? [];
+                $meta['daily_actions'][$date] = $meta['daily_actions'][$date] ?? [];
+                if (! is_array($meta['daily_actions'][$date])) {
+                    $meta['daily_actions'][$date] = [];
+                }
+                $meta['daily_actions'][$date]['cold_calling'] = 'yes';
+                $meta['last_activity_date'] = $date;
+
+                $actionLabel = 'Cold Calling';
+                $notesPayload = json_encode([
+                    'action_key' => 'cold_calling',
+                    'action_label' => $actionLabel,
+                    'parent_client_id' => (int) $id,
+                ]);
+                $driver = DB::connection()->getDriverName();
+                $base = \App\Models\Result::where('user_id', $user->id)
+                    ->where('type', 'revenue_action')
+                    ->where('client_name', $client->client_name)
+                    ->where('date', $date);
+                $exists = $driver === 'mysql'
+                    ? $base->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(notes, '$.action_key')) = ?", ['cold_calling'])->exists()
+                    : $base->whereRaw("json_extract(notes, '$.action_key') = ?", ['cold_calling'])->exists();
+                if (! $exists) {
+                    \App\Models\Result::create([
+                        'user_id' => $user->id,
+                        'type' => 'revenue_action',
+                        'client_name' => $client->client_name,
+                        'date' => $date,
+                        'value' => 0,
+                        'notes' => $notesPayload,
+                    ]);
+                }
+            }
+
+            $client->notes = json_encode($meta);
+            $client->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => $out['message'],
+                'advanced_to_follow_up' => $out['advanced_to_follow_up'],
+                'data' => [
+                    'client' => $client->fresh(),
+                    'lead_stage' => $meta['lead_stage'] ?? null,
+                    'cold_calling' => $meta['cold_calling'] ?? null,
+                ],
+            ]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    });
+
+    /** Leads in cold calling due for contact today (schedule empty or date <= today). */
+    Route::get('/clients/cold-calling/today', function (Request $request) {
+        $user = getAuthUser($request);
+        if (! $user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $leads = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->whereNotNull('notes')
+            ->orderByDesc('updated_at')
+            ->get();
+
+        $due = [];
+        foreach ($leads as $lead) {
+            try {
+                $decoded = json_decode($lead->notes, true);
+                if (! is_array($decoded)) {
+                    continue;
+                }
+                $meta = CrmPipeline::normalizeNotesMeta($decoded);
+                if (ColdCallingFlow::isDueForColdCallingToday($meta)) {
+                    $due[] = [
+                        'id' => $lead->id,
+                        'client_name' => $lead->client_name,
+                        'notes' => $lead->notes,
+                        'created_at' => $lead->created_at?->toIso8601String(),
+                        'cold_calling' => $meta['cold_calling'] ?? ColdCallingFlow::defaultState(),
+                    ];
+                }
+            } catch (\Throwable) {
+                continue;
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'count' => count($due),
+            'data' => $due,
+        ]);
+    });
+
+    /**
+     * Follow-up stage: log mode (call/whatsapp/email), outcome, optional next contact.
+     */
+    Route::post('/clients/{id}/follow-up/touch', function (Request $request, $id) {
+        $user = getAuthUser($request);
+        if (! $user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $data = $request->validate([
+            'mode' => ['required', 'string', 'in:call,whatsapp,email'],
+            'result' => ['required', 'string', 'in:ready_for_meeting,not_interested,continue_touch'],
+            'schedule' => ['sometimes', 'string', 'in:tomorrow,plus_2_days,custom'],
+            'next_contact_date' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
+        ]);
+
+        $client = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->findOrFail($id);
+
+        $meta = [];
+        if ($client->notes) {
+            try {
+                $decoded = json_decode($client->notes, true);
+                if (is_array($decoded)) {
+                    $meta = CrmPipeline::normalizeNotesMeta($decoded);
+                }
+            } catch (\Throwable $e) {
+            }
+        }
+
+        try {
+            $out = FollowUpFlow::applyTouch($meta, $data);
+            $meta = $out['meta'];
+            if ($out['advanced_to_client_meeting']) {
+                $meta['client_meeting'] = array_merge(
+                    ClientMeetingFlow::defaultState(),
+                    is_array($meta['client_meeting'] ?? null) ? $meta['client_meeting'] : []
+                );
+            }
+            $date = now()->toDateString();
+
+            if ($out['advanced_to_client_meeting']) {
+                $meta['daily_actions'] = $meta['daily_actions'] ?? [];
+                $meta['daily_actions'][$date] = $meta['daily_actions'][$date] ?? [];
+                if (! is_array($meta['daily_actions'][$date])) {
+                    $meta['daily_actions'][$date] = [];
+                }
+                $meta['daily_actions'][$date]['follow_up_back'] = 'yes';
+                $meta['last_activity_date'] = $date;
+
+                $actionLabel = 'Follow-up';
+                $notesPayload = json_encode([
+                    'action_key' => 'follow_up_back',
+                    'action_label' => $actionLabel,
+                    'parent_client_id' => (int) $id,
+                ]);
+                $driver = DB::connection()->getDriverName();
+                $base = \App\Models\Result::where('user_id', $user->id)
+                    ->where('type', 'revenue_action')
+                    ->where('client_name', $client->client_name)
+                    ->where('date', $date);
+                $exists = $driver === 'mysql'
+                    ? $base->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(notes, '$.action_key')) = ?", ['follow_up_back'])->exists()
+                    : $base->whereRaw("json_extract(notes, '$.action_key') = ?", ['follow_up_back'])->exists();
+                if (! $exists) {
+                    \App\Models\Result::create([
+                        'user_id' => $user->id,
+                        'type' => 'revenue_action',
+                        'client_name' => $client->client_name,
+                        'date' => $date,
+                        'value' => 0,
+                        'notes' => $notesPayload,
+                    ]);
+                }
+            }
+
+            $client->notes = json_encode($meta);
+            $client->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => $out['message'],
+                'advanced_to_client_meeting' => $out['advanced_to_client_meeting'],
+                'data' => [
+                    'client' => $client->fresh(),
+                    'lead_stage' => $meta['lead_stage'] ?? null,
+                    'follow_up' => $meta['follow_up'] ?? null,
+                ],
+            ]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    });
+
+    /** Leads in follow-up due for contact today (schedule empty or date <= today; excludes stalled/retargeting). */
+    Route::get('/clients/follow-up/today', function (Request $request) {
+        $user = getAuthUser($request);
+        if (! $user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $leads = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->whereNotNull('notes')
+            ->orderByDesc('updated_at')
+            ->get();
+
+        $due = [];
+        foreach ($leads as $lead) {
+            try {
+                $decoded = json_decode($lead->notes, true);
+                if (! is_array($decoded)) {
+                    continue;
+                }
+                $meta = CrmPipeline::normalizeNotesMeta($decoded);
+                if (FollowUpFlow::isDueForFollowUpToday($meta)) {
+                    $due[] = [
+                        'id' => $lead->id,
+                        'client_name' => $lead->client_name,
+                        'notes' => $lead->notes,
+                        'created_at' => $lead->created_at?->toIso8601String(),
+                        'follow_up' => $meta['follow_up'] ?? FollowUpFlow::defaultState(),
+                    ];
+                }
+            } catch (\Throwable) {
+                continue;
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'count' => count($due),
+            'data' => $due,
+        ]);
+    });
+
+    /**
+     * Client Meeting stage: channel, outcome, optional next touch schedule.
+     */
+    Route::post('/clients/{id}/client-meeting/touch', function (Request $request, $id) {
+        $user = getAuthUser($request);
+        if (! $user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $data = $request->validate([
+            'mode' => ['required', 'string', 'in:in_person,video,call,whatsapp'],
+            'result' => ['required', 'string', 'in:advance_to_negotiation,not_interested,continue_touch'],
+            'schedule' => ['sometimes', 'string', 'in:tomorrow,plus_2_days,custom'],
+            'next_contact_date' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
+        ]);
+
+        $client = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->findOrFail($id);
+
+        $meta = [];
+        if ($client->notes) {
+            try {
+                $decoded = json_decode($client->notes, true);
+                if (is_array($decoded)) {
+                    $meta = CrmPipeline::normalizeNotesMeta($decoded);
+                }
+            } catch (\Throwable $e) {
+            }
+        }
+
+        try {
+            $out = ClientMeetingFlow::applyTouch($meta, $data);
+            $meta = $out['meta'];
+            if ($out['advanced_to_deal_negotiation']) {
+                $meta['deal_negotiation'] = array_merge(
+                    DealNegotiationFlow::defaultState(),
+                    is_array($meta['deal_negotiation'] ?? null) ? $meta['deal_negotiation'] : []
+                );
+            }
+            $date = now()->toDateString();
+
+            if ($out['advanced_to_deal_negotiation']) {
+                $meta['daily_actions'] = $meta['daily_actions'] ?? [];
+                $meta['daily_actions'][$date] = $meta['daily_actions'][$date] ?? [];
+                if (! is_array($meta['daily_actions'][$date])) {
+                    $meta['daily_actions'][$date] = [];
+                }
+                $meta['daily_actions'][$date]['client_meeting'] = 'yes';
+                $meta['last_activity_date'] = $date;
+
+                $actionLabel = 'Client Meeting';
+                $notesPayload = json_encode([
+                    'action_key' => 'client_meeting',
+                    'action_label' => $actionLabel,
+                    'parent_client_id' => (int) $id,
+                ]);
+                $driver = DB::connection()->getDriverName();
+                $base = \App\Models\Result::where('user_id', $user->id)
+                    ->where('type', 'revenue_action')
+                    ->where('client_name', $client->client_name)
+                    ->where('date', $date);
+                $exists = $driver === 'mysql'
+                    ? $base->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(notes, '$.action_key')) = ?", ['client_meeting'])->exists()
+                    : $base->whereRaw("json_extract(notes, '$.action_key') = ?", ['client_meeting'])->exists();
+                if (! $exists) {
+                    \App\Models\Result::create([
+                        'user_id' => $user->id,
+                        'type' => 'revenue_action',
+                        'client_name' => $client->client_name,
+                        'date' => $date,
+                        'value' => 0,
+                        'notes' => $notesPayload,
+                    ]);
+                }
+            }
+
+            $client->notes = json_encode($meta);
+            $client->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => $out['message'],
+                'advanced_to_deal_negotiation' => $out['advanced_to_deal_negotiation'],
+                'data' => [
+                    'client' => $client->fresh(),
+                    'lead_stage' => $meta['lead_stage'] ?? null,
+                    'client_meeting' => $meta['client_meeting'] ?? null,
+                ],
+            ]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    });
+
+    Route::get('/clients/client-meeting/today', function (Request $request) {
+        $user = getAuthUser($request);
+        if (! $user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $leads = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->whereNotNull('notes')
+            ->orderByDesc('updated_at')
+            ->get();
+
+        $due = [];
+        foreach ($leads as $lead) {
+            try {
+                $decoded = json_decode($lead->notes, true);
+                if (! is_array($decoded)) {
+                    continue;
+                }
+                $meta = CrmPipeline::normalizeNotesMeta($decoded);
+                if (ClientMeetingFlow::isDueForClientMeetingToday($meta)) {
+                    $due[] = [
+                        'id' => $lead->id,
+                        'client_name' => $lead->client_name,
+                        'notes' => $lead->notes,
+                        'created_at' => $lead->created_at?->toIso8601String(),
+                        'client_meeting' => $meta['client_meeting'] ?? ClientMeetingFlow::defaultState(),
+                    ];
+                }
+            } catch (\Throwable) {
+                continue;
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'count' => count($due),
+            'data' => $due,
+        ]);
+    });
+
+    /**
+     * Deal Negotiation stage.
+     */
+    Route::post('/clients/{id}/deal-negotiation/touch', function (Request $request, $id) {
+        $user = getAuthUser($request);
+        if (! $user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $data = $request->validate([
+            'mode' => ['required', 'string', 'in:in_person,video,call,whatsapp,email'],
+            'result' => ['required', 'string', 'in:advance_to_closure,not_interested,continue_touch'],
+            'schedule' => ['sometimes', 'string', 'in:tomorrow,plus_2_days,custom'],
+            'next_contact_date' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
+        ]);
+
+        $client = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->findOrFail($id);
+
+        $meta = [];
+        if ($client->notes) {
+            try {
+                $decoded = json_decode($client->notes, true);
+                if (is_array($decoded)) {
+                    $meta = CrmPipeline::normalizeNotesMeta($decoded);
+                }
+            } catch (\Throwable $e) {
+            }
+        }
+
+        try {
+            $out = DealNegotiationFlow::applyTouch($meta, $data);
+            $meta = $out['meta'];
+            if ($out['advanced_to_deal_close']) {
+                $meta['deal_closure'] = array_merge(
+                    DealClosureFlow::defaultState(),
+                    is_array($meta['deal_closure'] ?? null) ? $meta['deal_closure'] : []
+                );
+            }
+            $date = now()->toDateString();
+
+            if ($out['advanced_to_deal_close']) {
+                $meta['daily_actions'] = $meta['daily_actions'] ?? [];
+                $meta['daily_actions'][$date] = $meta['daily_actions'][$date] ?? [];
+                if (! is_array($meta['daily_actions'][$date])) {
+                    $meta['daily_actions'][$date] = [];
+                }
+                $meta['daily_actions'][$date]['deal_negotiation'] = 'yes';
+                $meta['last_activity_date'] = $date;
+
+                $actionLabel = 'Deal Negotiation';
+                $notesPayload = json_encode([
+                    'action_key' => 'deal_negotiation',
+                    'action_label' => $actionLabel,
+                    'parent_client_id' => (int) $id,
+                ]);
+                $driver = DB::connection()->getDriverName();
+                $base = \App\Models\Result::where('user_id', $user->id)
+                    ->where('type', 'revenue_action')
+                    ->where('client_name', $client->client_name)
+                    ->where('date', $date);
+                $exists = $driver === 'mysql'
+                    ? $base->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(notes, '$.action_key')) = ?", ['deal_negotiation'])->exists()
+                    : $base->whereRaw("json_extract(notes, '$.action_key') = ?", ['deal_negotiation'])->exists();
+                if (! $exists) {
+                    \App\Models\Result::create([
+                        'user_id' => $user->id,
+                        'type' => 'revenue_action',
+                        'client_name' => $client->client_name,
+                        'date' => $date,
+                        'value' => 0,
+                        'notes' => $notesPayload,
+                    ]);
+                }
+            }
+
+            $client->notes = json_encode($meta);
+            $client->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => $out['message'],
+                'advanced_to_deal_close' => $out['advanced_to_deal_close'],
+                'data' => [
+                    'client' => $client->fresh(),
+                    'lead_stage' => $meta['lead_stage'] ?? null,
+                    'deal_negotiation' => $meta['deal_negotiation'] ?? null,
+                ],
+            ]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    });
+
+    Route::get('/clients/deal-negotiation/today', function (Request $request) {
+        $user = getAuthUser($request);
+        if (! $user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $leads = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->whereNotNull('notes')
+            ->orderByDesc('updated_at')
+            ->get();
+
+        $due = [];
+        foreach ($leads as $lead) {
+            try {
+                $decoded = json_decode($lead->notes, true);
+                if (! is_array($decoded)) {
+                    continue;
+                }
+                $meta = CrmPipeline::normalizeNotesMeta($decoded);
+                if (DealNegotiationFlow::isDueForNegotiationToday($meta)) {
+                    $due[] = [
+                        'id' => $lead->id,
+                        'client_name' => $lead->client_name,
+                        'notes' => $lead->notes,
+                        'created_at' => $lead->created_at?->toIso8601String(),
+                        'deal_negotiation' => $meta['deal_negotiation'] ?? DealNegotiationFlow::defaultState(),
+                    ];
+                }
+            } catch (\Throwable) {
+                continue;
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'count' => count($due),
+            'data' => $due,
+        ]);
+    });
+
+    /**
+     * Deal Closure stage (paperwork follow-up / lost — recording a win still uses action-log deal_closed from the app).
+     */
+    Route::post('/clients/{id}/deal-closure/touch', function (Request $request, $id) {
+        $user = getAuthUser($request);
+        if (! $user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $data = $request->validate([
+            'mode' => ['required', 'string', 'in:call,whatsapp,email'],
+            'result' => ['required', 'string', 'in:lost,continue_touch'],
+            'schedule' => ['sometimes', 'string', 'in:tomorrow,plus_2_days,custom'],
+            'next_contact_date' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
+        ]);
+
+        $client = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->findOrFail($id);
+
+        $meta = [];
+        if ($client->notes) {
+            try {
+                $decoded = json_decode($client->notes, true);
+                if (is_array($decoded)) {
+                    $meta = CrmPipeline::normalizeNotesMeta($decoded);
+                }
+            } catch (\Throwable $e) {
+            }
+        }
+
+        try {
+            $out = DealClosureFlow::applyTouch($meta, $data);
+            $meta = $out['meta'];
+
+            $client->notes = json_encode($meta);
+            $client->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => $out['message'],
+                'data' => [
+                    'client' => $client->fresh(),
+                    'lead_stage' => $meta['lead_stage'] ?? null,
+                    'deal_closure' => $meta['deal_closure'] ?? null,
+                ],
+            ]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    });
+
+    Route::get('/clients/deal-closure/today', function (Request $request) {
+        $user = getAuthUser($request);
+        if (! $user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $leads = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->whereNotNull('notes')
+            ->orderByDesc('updated_at')
+            ->get();
+
+        $due = [];
+        foreach ($leads as $lead) {
+            try {
+                $decoded = json_decode($lead->notes, true);
+                if (! is_array($decoded)) {
+                    continue;
+                }
+                $meta = CrmPipeline::normalizeNotesMeta($decoded);
+                if (DealClosureFlow::isDueForDealClosureToday($meta)) {
+                    $due[] = [
+                        'id' => $lead->id,
+                        'client_name' => $lead->client_name,
+                        'notes' => $lead->notes,
+                        'created_at' => $lead->created_at?->toIso8601String(),
+                        'deal_closure' => $meta['deal_closure'] ?? DealClosureFlow::defaultState(),
+                    ];
+                }
+            } catch (\Throwable) {
+                continue;
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'count' => count($due),
+            'data' => $due,
+        ]);
     });
 
     // Per-client daily execution progress (what % of today's actions are completed)
@@ -2947,28 +4237,14 @@ Route::group(['middleware' => []], function () {
             try {
                 $decoded = json_decode($client->notes, true);
                 if (is_array($decoded)) {
-                    $meta = $decoded;
+                    $meta = CrmPipeline::normalizeNotesMeta($decoded);
                 }
             } catch (\Throwable $e) {
             }
         }
 
-        // Same config keys as /clients/{id}/actions
-        $config = [
-            'cold_call_block',
-            'follow_up_block',
-            'client_meeting',
-            'site_visit',
-            'content_creation',
-            'content_posting',
-            'prospecting_session',
-            'deal_negotiation',
-            'crm_update',
-            'referral_ask',
-            'deal_closed',
-            'network_event',
-            'proposal_sent',
-        ];
+        // Same five keys as /clients/{id}/actions (Deal Room pipeline)
+        $config = array_column(CrmPipeline::ACTION_CONFIG, 'key');
 
         $total = count($config);
 
@@ -3026,7 +4302,7 @@ Route::group(['middleware' => []], function () {
             try {
                 $decoded = json_decode($client->notes, true);
                 if (is_array($decoded)) {
-                    $meta = $decoded;
+                    $meta = CrmPipeline::normalizeNotesMeta($decoded);
                 }
             } catch (\Throwable $e) {
             }
@@ -3040,21 +4316,7 @@ Route::group(['middleware' => []], function () {
             $storedActions = $meta['actions'];
         }
 
-        $config = [
-            ['key' => 'cold_call_block', 'label' => 'Cold Calling Block'],
-            ['key' => 'follow_up_block', 'label' => 'Follow-up Block'],
-            ['key' => 'client_meeting', 'label' => 'Client Meeting'],
-            ['key' => 'site_visit', 'label' => 'Site Visit'],
-            ['key' => 'content_creation', 'label' => 'Content Creation'],
-            ['key' => 'content_posting', 'label' => 'Content Posting'],
-            ['key' => 'prospecting_session', 'label' => 'Prospecting Session'],
-            ['key' => 'deal_negotiation', 'label' => 'Deal Negotiation'],
-            ['key' => 'crm_update', 'label' => 'CRM Update'],
-            ['key' => 'referral_ask', 'label' => 'Referral Ask'],
-            ['key' => 'deal_closed', 'label' => 'Deal Closed'],
-            ['key' => 'network_event', 'label' => 'Network Event'],
-            ['key' => 'proposal_sent', 'label' => 'Proposal Sent'],
-        ];
+        $config = CrmPipeline::ACTION_CONFIG;
 
         $actions = array_map(function ($item) use ($storedActions) {
             $key = $item['key'];
@@ -3069,34 +4331,27 @@ Route::group(['middleware' => []], function () {
 
         // Backfill: ensure revenue_action records exist for any action marked "yes"
         // (handles actions set before the revenue_action enum was added)
-        $actionLabels = [
-            'cold_call_block' => 'Cold Calling Block',
-            'follow_up_block' => 'Follow-up Block',
-            'client_meeting' => 'Client Meeting',
-            'site_visit' => 'Site Visit',
-            'content_creation' => 'Content Creation',
-            'content_posting' => 'Content Posting',
-            'prospecting_session' => 'Prospecting Session',
-            'deal_negotiation' => 'Deal Negotiation',
-            'crm_update' => 'CRM Update',
-            'referral_ask' => 'Referral Ask',
-            'deal_closed' => 'Deal Closed',
-            'network_event' => 'Network Event',
-            'proposal_sent' => 'Proposal Sent',
-        ];
+        $actionLabels = CrmPipeline::ACTION_LABELS;
         $driver = DB::connection()->getDriverName();
         foreach ($storedActions as $actionKey => $status) {
             if ($status !== 'yes' || ! is_string($actionKey)) {
                 continue;
             }
-            $actionLabel = $actionLabels[$actionKey] ?? ucfirst(str_replace('_', ' ', $actionKey));
+            $normalizedKey = CrmPipeline::normalizeActionKey($actionKey);
+            $actionLabel = $actionLabels[$normalizedKey] ?? $actionLabels[$actionKey] ?? ucfirst(str_replace('_', ' ', $normalizedKey));
             $exists = \App\Models\Result::where('user_id', $user->id)
                 ->where('type', 'revenue_action')
                 ->where('client_name', $client->client_name)
                 ->where('date', $date);
             $exists = $driver === 'mysql'
-                ? $exists->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(notes, '$.action_key')) = ?", [$actionKey])->exists()
-                : $exists->whereRaw("json_extract(notes, '$.action_key') = ?", [$actionKey])->exists();
+                ? $exists->where(function ($q) use ($actionKey, $normalizedKey) {
+                    $q->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(notes, '$.action_key')) = ?", [$actionKey])
+                        ->orWhereRaw("JSON_UNQUOTE(JSON_EXTRACT(notes, '$.action_key')) = ?", [$normalizedKey]);
+                })->exists()
+                : $exists->where(function ($q) use ($actionKey, $normalizedKey) {
+                    $q->whereRaw("json_extract(notes, '$.action_key') = ?", [$actionKey])
+                        ->orWhereRaw("json_extract(notes, '$.action_key') = ?", [$normalizedKey]);
+                })->exists();
             if (! $exists) {
                 try {
                     \App\Models\Result::create([
@@ -3106,7 +4361,7 @@ Route::group(['middleware' => []], function () {
                         'date' => $date,
                         'value' => 0,
                         'notes' => json_encode([
-                            'action_key' => $actionKey,
+                            'action_key' => $normalizedKey,
                             'action_label' => $actionLabel,
                             'parent_client_id' => (int) $id,
                         ]),
@@ -3136,7 +4391,10 @@ Route::group(['middleware' => []], function () {
             'action_key' => ['required', 'string', 'max:255'],
             'status' => ['required', 'string', 'in:yes,no'],
             'date' => ['sometimes', 'date'],
+            'package_status' => ['sometimes', 'string', 'in:hot,nurture,blocker'],
         ]);
+
+        $data['action_key'] = CrmPipeline::normalizeActionKey($data['action_key']);
 
         $client = \App\Models\Result::where('user_id', $user->id)
             ->where('type', 'hot_lead')
@@ -3149,7 +4407,7 @@ Route::group(['middleware' => []], function () {
             try {
                 $decoded = json_decode($client->notes, true);
                 if (is_array($decoded)) {
-                    $meta = $decoded;
+                    $meta = CrmPipeline::normalizeNotesMeta($decoded);
                 }
             } catch (\Throwable $e) {
             }
@@ -3166,6 +4424,10 @@ Route::group(['middleware' => []], function () {
         $previousStatus = $meta['daily_actions'][$date][$data['action_key']] ?? null;
         $meta['daily_actions'][$date][$data['action_key']] = $data['status'];
 
+        if (isset($data['package_status'])) {
+            $meta['lead_package'] = $data['package_status'];
+        }
+
         $client->notes = json_encode($meta);
         $client->save();
 
@@ -3178,22 +4440,8 @@ Route::group(['middleware' => []], function () {
 
         // When status is "yes", create a Result so it appears in Activity for this client.
         // Only create if one doesn't exist yet (handles backfill for actions set to Yes before migration).
-        if ($data['status'] === 'yes') {
-            $actionLabels = [
-                'cold_call_block' => 'Cold Calling Block',
-                'follow_up_block' => 'Follow-up Block',
-                'client_meeting' => 'Client Meeting',
-                'site_visit' => 'Site Visit',
-                'content_creation' => 'Content Creation',
-                'content_posting' => 'Content Posting',
-                'prospecting_session' => 'Prospecting Session',
-                'deal_negotiation' => 'Deal Negotiation',
-                'crm_update' => 'CRM Update',
-                'referral_ask' => 'Referral Ask',
-                'deal_closed' => 'Deal Closed',
-                'network_event' => 'Network Event',
-                'proposal_sent' => 'Proposal Sent',
-            ];
+        if ($data['status'] === 'yes' && $data['action_key'] !== 'update_package') {
+            $actionLabels = CrmPipeline::ACTION_LABELS;
             $actionLabel = $actionLabels[$data['action_key']] ?? ucfirst(str_replace('_', ' ', $data['action_key']));
             $notesPayload = json_encode([
                 'action_key' => $data['action_key'],
@@ -3208,8 +4456,14 @@ Route::group(['middleware' => []], function () {
                 ->where('client_name', $client->client_name)
                 ->where('date', $date);
             $exists = $driver === 'mysql'
-                ? $base->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(notes, '$.action_key')) = ?", [$data['action_key']])->exists()
-                : $base->whereRaw("json_extract(notes, '$.action_key') = ?", [$data['action_key']])->exists();
+                ? $base->where(function ($q) use ($data) {
+                    $q->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(notes, '$.action_key')) = ?", [$data['action_key']])
+                        ->orWhereRaw("JSON_UNQUOTE(JSON_EXTRACT(notes, '$.action_key')) = ?", ['site_visit']);
+                })->exists()
+                : $base->where(function ($q) use ($data) {
+                    $q->whereRaw("json_extract(notes, '$.action_key') = ?", [$data['action_key']])
+                        ->orWhereRaw("json_extract(notes, '$.action_key') = ?", ['site_visit']);
+                })->exists();
 
             if (! $exists) {
                 try {
@@ -3228,9 +4482,27 @@ Route::group(['middleware' => []], function () {
             }
         }
 
+        if ($data['status'] === 'yes' && $data['action_key'] !== 'update_package') {
+            // Update the lead's current stage in notes
+            $currentStage = CrmPipeline::humanStageFromActionKey($data['action_key']);
+            $meta['lead_stage'] = $currentStage;
+            $meta['last_activity_date'] = $date;
+
+            // Auto-advance if not final stage
+            $stages = CrmPipeline::ORDERED_STAGE_STRINGS;
+            $currentIndex = array_search($currentStage, $stages, true);
+            if ($currentIndex !== false && $currentIndex < count($stages) - 1) {
+                $meta['lead_stage'] = $stages[$currentIndex + 1];
+            }
+
+            $client->notes = json_encode($meta);
+            $client->save();
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Action updated',
+            'lead_stage' => $meta['lead_stage'] ?? null,
         ]);
     });
 
@@ -3566,14 +4838,19 @@ Route::group(['middleware' => []], function () {
         }
         $to = $now->toDateString();
 
-        // Key metrics: all-time totals (total clients, total deals, total commission, top source across all clients)
-        $hotLeads = \App\Models\Result::where('user_id', $user->id)
+        // Key metrics: distinct clients / deals (avoids duplicate rows inflating totals)
+        $hotLeads = (int) \App\Models\Result::query()
+            ->where('user_id', $user->id)
             ->where('type', 'hot_lead')
             ->whereNotNull('client_name')
-            ->count();
+            ->where('client_name', '!=', '')
+            ->selectRaw('COUNT(DISTINCT client_name) as c')
+            ->value('c');
 
         $dealsClosed = \App\Models\Result::where('user_id', $user->id)
             ->where('type', 'deal_closed')
+            ->whereNotNull('client_name')
+            ->where('client_name', '!=', '')
             ->count();
 
         // Net commission: from type=commission (value) + deal_closed (notes.commission)
@@ -3618,32 +4895,61 @@ Route::group(['middleware' => []], function () {
                 break;
         }
 
-        // Period counts for change indicator (vs previous period)
-        $periodLeads = \App\Models\Result::where('user_id', $user->id)
+        // Period-on-period: distinct client names with activity in each window (aligns with CRM client counts)
+        $periodLeads = (int) \App\Models\Result::query()
+            ->where('user_id', $user->id)
             ->where('type', 'hot_lead')
             ->whereBetween('date', [$from, $to])
-            ->count();
+            ->whereNotNull('client_name')
+            ->where('client_name', '!=', '')
+            ->selectRaw('COUNT(DISTINCT client_name) as c')
+            ->value('c');
         $periodDeals = \App\Models\Result::where('user_id', $user->id)
             ->where('type', 'deal_closed')
             ->whereBetween('date', [$from, $to])
+            ->whereNotNull('client_name')
+            ->where('client_name', '!=', '')
             ->count();
-        $prevLeads = \App\Models\Result::where('user_id', $user->id)
+        $prevLeads = (int) \App\Models\Result::query()
+            ->where('user_id', $user->id)
             ->where('type', 'hot_lead')
             ->whereBetween('date', [$prevFrom, $prevTo])
-            ->count();
+            ->whereNotNull('client_name')
+            ->where('client_name', '!=', '')
+            ->selectRaw('COUNT(DISTINCT client_name) as c')
+            ->value('c');
         $prevDeals = \App\Models\Result::where('user_id', $user->id)
             ->where('type', 'deal_closed')
             ->whereBetween('date', [$prevFrom, $prevTo])
+            ->whereNotNull('client_name')
+            ->where('client_name', '!=', '')
             ->count();
 
         $leadsChange = $prevLeads > 0 ? round((($periodLeads - $prevLeads) / $prevLeads) * 100) : ($periodLeads > 0 ? 100 : 0);
         $dealsChange = $prevDeals > 0 ? round((($periodDeals - $prevDeals) / $prevDeals) * 100) : ($periodDeals > 0 ? 100 : 0);
 
-        // Recent activity: last 10 results by created_at (ignores period date range so newly logged actions always show)
-        $recentActivity = \App\Models\Result::where('user_id', $user->id)
+        // Recent activity: newest-first, one row per client name (avoids repeated "test 22" from many revenue_action rows)
+        $recentCandidates = \App\Models\Result::where('user_id', $user->id)
+            ->whereIn('type', ['hot_lead', 'deal_closed', 'revenue_action', 'commission'])
             ->orderByDesc('created_at')
-            ->limit(10)
+            ->limit(80)
             ->get(['id', 'type', 'client_name', 'value', 'source', 'date', 'created_at', 'notes']);
+        $seenNames = [];
+        $recentActivity = collect();
+        foreach ($recentCandidates as $row) {
+            $nameKey = strtolower(trim((string) ($row->client_name ?? '')));
+            if ($nameKey === '') {
+                $nameKey = 'id:'.$row->id;
+            }
+            if (isset($seenNames[$nameKey])) {
+                continue;
+            }
+            $seenNames[$nameKey] = true;
+            $recentActivity->push($row);
+            if ($recentActivity->count() >= 10) {
+                break;
+            }
+        }
 
         Log::info('[REVENUE_DEBUG] GET /revenue/metrics', [
             'period' => $period,
@@ -3979,4 +5285,13 @@ Route::group(['middleware' => []], function () {
         ]);
     });
 
+});
+
+// Disaster Recovery & System Backups (Admin Only)
+Route::group(['prefix' => 'admin/system'], function() {
+    Route::get('/backups', [\App\Http\Controllers\BackupController::class, 'index']);
+    Route::get('/backups/download/{filename}', [\App\Http\Controllers\BackupController::class, 'download']);
+    Route::delete('/backups/{filename}', [\App\Http\Controllers\BackupController::class, 'destroy']);
+    Route::get('/backup', [\App\Http\Controllers\BackupController::class, 'export']);
+    Route::post('/restore', [\App\Http\Controllers\BackupController::class, 'import']);
 });

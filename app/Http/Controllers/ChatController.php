@@ -18,13 +18,33 @@ class ChatController extends Controller
 {
     private const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
     private const MAX_HISTORY = 20;
+    private const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1/chat/completions';
+
+    private function getRuntimeChatCompletionsUrl(): string
+    {
+        $provider = $this->getRuntimeProvider();
+        $custom = trim((string) cache('ai_openai_base_url', ''));
+        if ($custom !== '') {
+            return $custom;
+        }
+        return match ($provider) {
+            'openrouter' => 'https://openrouter.ai/api/v1/chat/completions',
+            'groq' => 'https://api.groq.com/openai/v1/chat/completions',
+            'together' => 'https://api.together.xyz/v1/chat/completions',
+            'deepseek' => 'https://api.deepseek.com/v1/chat/completions',
+            'mistral' => 'https://api.mistral.ai/v1/chat/completions',
+            'fireworks' => 'https://api.fireworks.ai/inference/v1/chat/completions',
+            'xai' => 'https://api.x.ai/v1/chat/completions',
+            default => self::DEFAULT_OPENAI_BASE_URL,
+        };
+    }
 
     /**
      * System prompt with knowledge about the app.
      */
-    private function getSystemPrompt(): string
+    private function getSystemPrompt(?User $user = null, ?string $customKnowledgeBase = null): string
     {
-        return <<<'PROMPT'
+        $base = <<<'PROMPT'
 You are Reven, a friendly AI assistant for the RealtorOne real estate training app. You help users with:
 
 - **Courses & training**: Enrolled courses, course progress, the Cold Calling Master program, Million Dirham Beliefs Program, and learning content
@@ -35,6 +55,49 @@ You are Reven, a friendly AI assistant for the RealtorOne real estate training a
 
 Be concise, helpful, and encouraging. If asked about something outside this scope, politely say you focus on real estate training and the app. Use markdown for lists when helpful.
 PROMPT;
+        $name = trim((string) ($user?->name ?? ''));
+        $tier = trim((string) ($user?->membership_tier ?? 'Consultant'));
+        $email = trim((string) ($user?->email ?? ''));
+        $city = trim((string) ($user?->city ?? ''));
+        $context = "User context:\n".
+            '- Name: '.($name !== '' ? $name : 'User')."\n".
+            '- Tier: '.($tier !== '' ? $tier : 'Consultant')."\n".
+            '- Email: '.($email !== '' ? $email : 'n/a')."\n".
+            '- City: '.($city !== '' ? $city : 'n/a')."\n".
+            "When appropriate, greet and refer to the user by name naturally.";
+
+        $behavior = trim((string) cache('ai_behavior_instructions', ''));
+        if ($behavior !== '') {
+            $context .= "\n\nBehavior instructions (admin configured):\n".$behavior;
+        }
+
+        if ($this->getUseCustomKb() && $customKnowledgeBase && trim($customKnowledgeBase) !== '') {
+            $context .= "\n\nCustom knowledge base (admin configured):\n".trim($customKnowledgeBase);
+        }
+
+        // Structured KB blocks (multiple datasets)
+        if ($this->getUseCustomKb()) {
+            $kbBlocksRaw = (string) cache('ai_kb_blocks', '[]');
+            $kbBlocks = json_decode($kbBlocksRaw, true);
+            if (is_array($kbBlocks)) {
+                $enabled = array_values(array_filter($kbBlocks, fn ($b) => is_array($b) && (($b['enabled'] ?? true) === true)));
+                if (! empty($enabled)) {
+                    $joined = [];
+                    foreach ($enabled as $b) {
+                        $t = trim((string) ($b['title'] ?? ''));
+                        $c = trim((string) ($b['content'] ?? ''));
+                        if ($c === '') continue;
+                        $joined[] = ($t !== '' ? "## ".$t."\n".$c : $c);
+                        if (count($joined) >= 30) break; // keep prompt bounded
+                    }
+                    if (! empty($joined)) {
+                        $context .= "\n\nKnowledge base datasets (admin configured):\n".implode("\n\n---\n\n", $joined);
+                    }
+                }
+            }
+        }
+
+        return $base."\n\n".$context;
     }
 
     /**
@@ -44,8 +107,10 @@ PROMPT;
     private function getBasicReply(string $message, ?User $user): array
     {
         $text = strtolower(trim($message));
+        $displayName = trim((string) ($user?->name ?? ''));
+        $displayName = $displayName !== '' ? $displayName : 'there';
         if (preg_match('/\b(hi|hello|hey|hola|howdy)\b/', $text)) {
-            return ['reply' => 'Hi! I\'m Reven, your assistant for the RealtorOne app. Type **help** to see what I can do.', 'courses' => null, 'commands' => null];
+            return ['reply' => "Hi {$displayName}! I\'m Reven, your assistant for the RealtorOne app. Type **help** to see what I can do.", 'courses' => null, 'commands' => null];
         }
         if (preg_match('/\b(what can you do|help|commands|capabilities)\b/', $text)) {
             $commands = $this->getHelpCommands();
@@ -77,7 +142,64 @@ PROMPT;
         if (preg_match('/\b(cold call|cold calling|prospect|follow.?up)\b/i', $text)) {
             return ['reply' => 'Cold calling tips: great opener + active listening + clear objective. Check the Cold Calling Master course in your Courses tab!', 'courses' => null, 'commands' => null];
         }
-        return ['reply' => 'I\'m here to help! Type **help** to see what I can do, or try: courses, tasks, badges, profile.', 'courses' => null, 'commands' => null];
+        return ['reply' => "I\'m here to help, {$displayName}! Type **help** to see what I can do, or try: courses, tasks, badges, profile.", 'courses' => null, 'commands' => null];
+    }
+
+    private function getRuntimeOpenAiKey(): ?string
+    {
+        $cached = trim((string) cache('ai_openai_api_key', ''));
+        if ($cached !== '') {
+            return $cached;
+        }
+        $configKey = trim((string) config('services.openai.key'));
+        return $configKey !== '' ? $configKey : null;
+    }
+
+    private function getRuntimeProvider(): string
+    {
+        $provider = trim((string) cache('ai_provider', 'openai'));
+        return $provider !== '' ? $provider : 'openai';
+    }
+
+    private function getRuntimeOpenAiModel(): string
+    {
+        $model = trim((string) cache('ai_openai_model', 'gpt-4o-mini'));
+        return $model !== '' ? $model : 'gpt-4o-mini';
+    }
+
+    private function getUseCustomKb(): bool
+    {
+        return (bool) cache('ai_use_custom_kb', true);
+    }
+
+    private function getUseCourseKb(): bool
+    {
+        return (bool) cache('ai_use_course_kb', true);
+    }
+
+    private function isAiAllowedForUser(?User $user): bool
+    {
+        if (! $user) return true;
+        $tier = (string) ($user->membership_tier ?: 'Consultant');
+        if ($tier === 'Titan') return (bool) cache('ai_allow_titan', true);
+        if ($tier === 'Rainmaker') return (bool) cache('ai_allow_rainmaker', true);
+        return (bool) cache('ai_allow_consultant', true);
+    }
+
+    private function appendUpgradeSuggestionIfBlocked(string $reply, ?User $user): string
+    {
+        if (! $user) return $reply;
+        if ($this->isAiAllowedForUser($user)) return $reply;
+
+        $tier = (string) ($user->membership_tier ?: 'Consultant');
+        // Only upsell when access is blocked by tier (not when key/provider missing).
+        return rtrim($reply)."\n\n**AI replies are not enabled for your tier ({$tier}).** Upgrade to unlock full AI coaching in the app (Subscriptions).";
+    }
+
+    private function getRuntimeKnowledgeBase(): ?string
+    {
+        $cached = trim((string) cache('ai_custom_knowledge_base', ''));
+        return $cached !== '' ? $cached : null;
     }
 
     private function getHelpCommands(): array
@@ -173,9 +295,9 @@ PROMPT;
             ->orderBy('id')
             ->get();
 
-        $systemContent = $this->getSystemPrompt();
+        $systemContent = $this->getSystemPrompt($user, $this->getRuntimeKnowledgeBase());
         $coursesForResponse = null;
-        if (preg_match('/\b(course|courses|training|learning|enrolled|what are the courses|list courses|show courses)\b/i', $message)) {
+        if ($this->getUseCourseKb() && preg_match('/\b(course|courses|training|learning|enrolled|what are the courses|list courses|show courses)\b/i', $message)) {
             $coursesForResponse = $this->fetchAiCourseListForUser($user)->toArray();
             if (!empty($coursesForResponse)) {
                 $list = collect($coursesForResponse)->map(fn ($c) => '- ' . ($c['title'] ?? '') . (isset($c['description']) ? ': ' . Str::limit($c['description'], 80) : ''))->implode("\n");
@@ -187,16 +309,79 @@ PROMPT;
             ['role' => 'system', 'content' => $systemContent],
         ];
 
+        // Lightweight structured “tool” data for common CRM questions
+        $structuredContext = [];
+
+        // 1) Active clients list (hot_lead results with a current/open status)
+        if (preg_match('/\b(active client|active clients|current client|current deal|hot lead|pipeline)\b/i', $message)) {
+            $activeClients = \App\Models\Result::query()
+                ->where('user_id', $user->id)
+                ->where('type', 'hot_lead')
+                ->whereNotNull('client_name')
+                ->orderByDesc('date')
+                ->limit(50)
+                ->get(['client_name', 'source', 'status', 'date', 'value']);
+
+            if ($activeClients->isNotEmpty()) {
+                $structuredContext['active_clients'] = $activeClients->map(function ($r) {
+                    return [
+                        'client_name' => $r->client_name,
+                        'source' => $r->source,
+                        'status' => $r->status,
+                        'date' => optional($r->date)->toDateString(),
+                        'value' => $r->value,
+                    ];
+                })->values()->all();
+            }
+        }
+
+        // 2) Deals closed (this month) summary
+        if (preg_match('/\b(deal[s]? closed|closed deal|commission|revenue)\b/i', $message)) {
+            $monthStart = now()->startOfMonth();
+            $deals = \App\Models\Result::query()
+                ->where('user_id', $user->id)
+                ->where('type', 'deal_closed')
+                ->where('date', '>=', $monthStart)
+                ->orderByDesc('date')
+                ->limit(50)
+                ->get(['client_name', 'value', 'date', 'source']);
+
+            if ($deals->isNotEmpty()) {
+                $structuredContext['deals_closed_this_month'] = [
+                    'count' => $deals->count(),
+                    'total_value' => (float) $deals->sum('value'),
+                    'items' => $deals->map(function ($r) {
+                        return [
+                            'client_name' => $r->client_name,
+                            'value' => $r->value,
+                            'source' => $r->source,
+                            'date' => optional($r->date)->toDateString(),
+                        ];
+                    })->values()->all(),
+                ];
+            }
+        }
+
+        if (! empty($structuredContext)) {
+            $openaiMessages[] = [
+                'role' => 'system',
+                'content' => "Structured CRM data for this user (use this as ground truth when answering):\n".json_encode($structuredContext),
+            ];
+        }
+
         $recent = $history->take(-self::MAX_HISTORY);
         foreach ($recent as $m) {
             $parsed = $this->parseStoredContent($m->content);
             $openaiMessages[] = ['role' => $m->role, 'content' => $parsed];
         }
 
-        $apiKey = config('services.openai.key');
-        if (!$apiKey) {
+        $apiKey = $this->getRuntimeOpenAiKey();
+        if (! $this->isAiAllowedForUser($user) || $this->getRuntimeProvider() === 'disabled' || !$apiKey) {
             $basic = $this->getBasicReply($message, $user);
             $reply = $basic['reply'];
+            if (! $this->isAiAllowedForUser($user)) {
+                $reply = $this->appendUpgradeSuggestionIfBlocked((string) $reply, $user);
+            }
             $courses = $basic['courses'] ?? null;
             $commands = $basic['commands'] ?? null;
             $contentToStore = $reply;
@@ -224,11 +409,13 @@ PROMPT;
         }
 
         try {
+            $modelToUse = $this->getRuntimeOpenAiModel();
+            $url = $this->getRuntimeChatCompletionsUrl();
             /** @var HttpResponse $response */
             $response = Http::withToken($apiKey)
                 ->timeout(60)
-                ->post(self::OPENAI_URL, [
-                    'model' => 'gpt-4o-mini',
+                ->post($url, [
+                    'model' => $modelToUse,
                     'messages' => $openaiMessages,
                     'max_tokens' => 1024,
                 ]);
@@ -249,7 +436,7 @@ PROMPT;
             $totalTokens = is_array($usage) ? ($usage['total_tokens'] ?? null) : null;
             $promptTokens = is_array($usage) ? ($usage['prompt_tokens'] ?? null) : null;
             $completionTokens = is_array($usage) ? ($usage['completion_tokens'] ?? null) : null;
-            $model = is_string($data['model'] ?? null) ? $data['model'] : 'gpt-4o-mini';
+            $model = is_string($data['model'] ?? null) ? $data['model'] : $modelToUse;
 
             $contentToStore = $reply;
             if ($coursesForResponse !== null && !empty($coursesForResponse)) {
@@ -277,6 +464,137 @@ PROMPT;
             return response()->json($payload);
         } catch (\Throwable $e) {
             Log::error('Chat error', ['exception' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Something went wrong. Please try again.',
+            ], 500);
+        }
+    }
+
+    private function getAuthAdmin(Request $request): ?User
+    {
+        $admin = getAuthUser($request);
+        if (! $admin || $admin->email !== 'admin@realtorone.com') {
+            return null;
+        }
+        return $admin;
+    }
+
+    public function adminSendForUser(Request $request, int $userId): JsonResponse
+    {
+        $admin = $this->getAuthAdmin($request);
+        if (! $admin) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $user = User::query()->find($userId);
+        if (! $user) {
+            return response()->json(['success' => false, 'message' => 'User not found'], 404);
+        }
+
+        $validated = $request->validate([
+            'message' => 'required|string|max:4000',
+            'session_id' => 'nullable|integer|exists:chat_sessions,id',
+        ]);
+
+        $message = trim((string) $validated['message']);
+        $sessionId = $validated['session_id'] ?? null;
+
+        if ($sessionId) {
+            $session = ChatSession::where('id', $sessionId)->where('user_id', $user->id)->first();
+            if (! $session) {
+                return response()->json(['success' => false, 'message' => 'Session not found'], 404);
+            }
+        } else {
+            $session = ChatSession::create([
+                'user_id' => $user->id,
+                'title' => Str::limit($message, 50),
+            ]);
+        }
+
+        ChatMessage::create([
+            'chat_session_id' => $session->id,
+            'user_id' => $user->id,
+            'role' => 'user',
+            'content' => $message,
+        ]);
+
+        $history = $session->messages()
+            ->whereIn('role', ['user', 'assistant'])
+            ->orderBy('id')
+            ->get();
+
+        $systemContent = $this->getSystemPrompt($user, $this->getRuntimeKnowledgeBase());
+        $openaiMessages = [
+            ['role' => 'system', 'content' => $systemContent],
+        ];
+
+        $recent = $history->take(-self::MAX_HISTORY);
+        foreach ($recent as $m) {
+            $parsed = $this->parseStoredContent($m->content);
+            $openaiMessages[] = ['role' => $m->role, 'content' => $parsed];
+        }
+
+        $apiKey = $this->getRuntimeOpenAiKey();
+        if (! $this->isAiAllowedForUser($user) || $this->getRuntimeProvider() === 'disabled' || ! $apiKey) {
+            $basic = $this->getBasicReply($message, $user);
+            $reply = (string) ($basic['reply'] ?? '');
+            if (! $this->isAiAllowedForUser($user)) {
+                $reply = $this->appendUpgradeSuggestionIfBlocked($reply, $user);
+            }
+            ChatMessage::create([
+                'chat_session_id' => $session->id,
+                'user_id' => null,
+                'role' => 'assistant',
+                'content' => $reply,
+            ]);
+            return response()->json(['success' => true, 'reply' => $reply, 'session_id' => $session->id]);
+        }
+
+        try {
+            $modelToUse = $this->getRuntimeOpenAiModel();
+            $url = $this->getRuntimeChatCompletionsUrl();
+            /** @var HttpResponse $response */
+            $response = Http::withToken($apiKey)
+                ->timeout(60)
+                ->post($url, [
+                    'model' => $modelToUse,
+                    'messages' => $openaiMessages,
+                    'max_tokens' => 1024,
+                ]);
+
+            if (! $response->successful()) {
+                $body = $response->json();
+                $err = $body['error']['message'] ?? $response->body();
+                Log::error('OpenAI error (adminSendForUser)', ['status' => $response->status(), 'body' => $body]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'AI service error: '.$err,
+                ], 502);
+            }
+
+            $data = $response->json();
+            $reply = trim((string) ($data['choices'][0]['message']['content'] ?? ''));
+            $usage = is_array($data['usage'] ?? null) ? $data['usage'] : null;
+            $totalTokens = is_array($usage) ? ($usage['total_tokens'] ?? null) : null;
+            $promptTokens = is_array($usage) ? ($usage['prompt_tokens'] ?? null) : null;
+            $completionTokens = is_array($usage) ? ($usage['completion_tokens'] ?? null) : null;
+            $model = is_string($data['model'] ?? null) ? $data['model'] : $modelToUse;
+
+            ChatMessage::create([
+                'chat_session_id' => $session->id,
+                'user_id' => null,
+                'role' => 'assistant',
+                'content' => $reply,
+                'prompt_tokens' => $promptTokens,
+                'completion_tokens' => $completionTokens,
+                'total_tokens' => $totalTokens,
+                'model' => $model,
+            ]);
+
+            return response()->json(['success' => true, 'reply' => $reply, 'session_id' => $session->id]);
+        } catch (\Throwable $e) {
+            Log::error('Chat error (adminSendForUser)', ['exception' => $e->getMessage()]);
             return response()->json([
                 'success' => false,
                 'message' => 'Something went wrong. Please try again.',
