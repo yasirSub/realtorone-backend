@@ -2429,6 +2429,11 @@ Route::post('/login', function (Request $request) {
 });
 
 Route::post('/login/google', function (Request $request) {
+    Log::info('[GOOGLE LOGIN] Request received', [
+        'has_id_token' => $request->filled('id_token'),
+        'email_hint' => $request->input('email'),
+    ]);
+
     $data = $request->validate([
         'id_token' => ['required', 'string'],
         'email' => ['nullable', 'email'],
@@ -2442,6 +2447,10 @@ Route::post('/login/google', function (Request $request) {
         ]);
 
     if (! $verify->ok()) {
+        Log::warning('[GOOGLE LOGIN] tokeninfo verify failed', [
+            'status' => $verify->status(),
+            'body' => $verify->body(),
+        ]);
         return response()->json([
             'status' => 'error',
             'message' => 'Invalid Google token.',
@@ -2455,6 +2464,10 @@ Route::post('/login/google', function (Request $request) {
     $expectedAudience = trim((string) env('GOOGLE_CLIENT_ID', ''));
 
     if ($expectedAudience !== '' && $audience !== $expectedAudience) {
+        Log::warning('[GOOGLE LOGIN] audience mismatch', [
+            'aud' => $audience,
+            'expected' => $expectedAudience,
+        ]);
         return response()->json([
             'status' => 'error',
             'message' => 'Google token audience mismatch.',
@@ -2462,6 +2475,10 @@ Route::post('/login/google', function (Request $request) {
     }
 
     if ($googleEmail === '' || ! $emailVerified) {
+        Log::warning('[GOOGLE LOGIN] email not verified', [
+            'email' => $googleEmail,
+            'email_verified' => $emailVerified,
+        ]);
         return response()->json([
             'status' => 'error',
             'message' => 'Google account email is not verified.',
@@ -2486,6 +2503,7 @@ Route::post('/login/google', function (Request $request) {
         ]);
         $user->email_verified_at = now();
         $user->save();
+        Log::info('[GOOGLE LOGIN] user created', ['user_id' => $user->id, 'email' => $user->email]);
     } else {
         if (trim((string) $user->name) === '' && $name !== '') {
             $user->name = $name;
@@ -2494,6 +2512,7 @@ Route::post('/login/google', function (Request $request) {
             $user->email_verified_at = now();
         }
         $user->save();
+        Log::info('[GOOGLE LOGIN] existing user login', ['user_id' => $user->id, 'email' => $user->email]);
     }
 
     if ($user->status === 'inactive') {
@@ -2505,6 +2524,7 @@ Route::post('/login/google', function (Request $request) {
 
     $token = bin2hex(random_bytes(32));
     $user->update(['remember_token' => $token]);
+    Log::info('[GOOGLE LOGIN] success', ['user_id' => $user->id]);
 
     return response()->json([
         'status' => 'ok',
