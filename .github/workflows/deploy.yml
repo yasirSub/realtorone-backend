@@ -18,6 +18,9 @@ jobs:
           # password: ${{ secrets.VPS_PASSWORD }} # Use SSH Key for better security
           command_timeout: 30m
           script: |
+            set -e
+            echo "--- Disk Before Cleanup ---"
+            df -h
             mkdir -p /root/realtorone/backend
             cd /root/realtorone/backend
             # Use HTTPS for cloning if SSH key audit is an issue, or ensure SSH keys are correctly set on the VPS
@@ -28,8 +31,14 @@ jobs:
               git reset --hard origin/main
             fi
             docker compose down --remove-orphans
-            # Prune old images to free up space and ensure clean build
-            docker image prune -f
+            # Aggressive Docker cleanup to reclaim disk on small VPS volumes.
+            docker system prune -a --volumes -f
+            docker builder prune -a -f
+            # Keep system logs short to avoid root volume growth.
+            journalctl --vacuum-time=2d || true
+            apt-get clean || true
             docker compose up -d --build --force-recreate
             # Ensure the services are actually running
             docker compose ps
+            echo "--- Disk After Cleanup ---"
+            df -h
