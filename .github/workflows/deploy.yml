@@ -44,26 +44,29 @@ jobs:
             docker compose up -d --build --remove-orphans
             
             # Use a robust wait loop that survives container restarts
-            echo "Waiting for services to reach running state..."
+            echo "Waiting for services to reach running and healthy state..."
             for i in {1..20}; do
               MYSQL_STATUS=$(docker inspect -f '{{.State.Status}}' backend-mysql-1 2>/dev/null || echo "not_found")
               APP_STATUS=$(docker inspect -f '{{.State.Status}}' backend-app-1 2>/dev/null || echo "not_found")
               
-              echo "MySQL Status: $MYSQL_STATUS | App Status: $APP_STATUS (Attempt $i/20)"
+              # Also check actual health status if available
+              MYSQL_HEALTH=$(docker inspect -f '{{.State.Health.Status}}' backend-mysql-1 2>/dev/null || echo "none")
               
-              if [ "$MYSQL_STATUS" == "running" ] && [ "$APP_STATUS" == "running" ]; then
-                # Check if MySQL is actually accepting connections
-                if docker exec backend-mysql-1 mysqladmin ping -h 127.0.0.1 -uroot -ppassword --silent; then
-                  echo "Services are ready!"
-                  # Give the network one more second to settle
-                  sleep 2
+              echo "MySQL Status: $MYSQL_STATUS ($MYSQL_HEALTH) | App Status: $APP_STATUS (Attempt $i/20)"
+              
+              if [ "$MYSQL_STATUS" == "running" ] && ([ "$MYSQL_HEALTH" == "healthy" ] || [ "$MYSQL_HEALTH" == "none" ]) && [ "$APP_STATUS" == "running" ]; then
+                # Additional verification: Try to reach MySQL IP from within the App container
+                # This bypasses any DNS issues during the startup phase
+                if docker exec backend-app-1 mysqladmin ping -h 172.20.0.11 -uroot -ppassword --silent; then
+                  echo "Services and Network are ready!"
+                  sleep 3
                   break
                 fi
               fi
               sleep 5
             done
             
-            # Run migrations without blocking on specific container status if it's transient
+            # Run migrations using the static IP configured in DB_HOST
             echo "--- Updating Content (Migrations) ---"
             docker exec backend-app-1 php artisan migrate --force || (echo "Migration failed, checking logs..." && docker logs backend-app-1 --tail 20 && exit 1)
             docker exec backend-app-1 php artisan db:seed --force

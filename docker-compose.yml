@@ -18,7 +18,7 @@ services:
             RUN_MIGRATIONS: ${RUN_MIGRATIONS:-1}
             RUN_SEED: ${RUN_SEED:-0}
             DB_CONNECTION: mysql
-            DB_HOST: mysql
+            DB_HOST: 172.20.0.11
             DB_PORT: 3306
             DB_DATABASE: realtorone
             DB_USERNAME: sail
@@ -32,7 +32,8 @@ services:
         depends_on:
             - mysql
         networks:
-            - backend-network
+            backend-network:
+                ipv4_address: 172.20.0.10
 
     mysql:
         image: 'mysql:8.0'
@@ -47,12 +48,13 @@ services:
         volumes:
             - 'mysql-data:/var/lib/mysql'
         healthcheck:
-            test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+            test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-ppassword", "--silent"]
             interval: 5s
-            timeout: 3s
+            timeout: 5s
             retries: 30
         networks:
-            - backend-network
+            backend-network:
+                ipv4_address: 172.20.0.11
 
     phpmyadmin:
         image: phpmyadmin/phpmyadmin
@@ -68,11 +70,15 @@ services:
         depends_on:
             - mysql
         networks:
-            - backend-network
+            backend-network:
+                ipv4_address: 172.20.0.12
 
 networks:
     backend-network:
         driver: bridge
+        ipam:
+            config:
+                - subnet: 172.20.0.0/24
 
 volumes:
     mysql-data:
