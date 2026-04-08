@@ -30,20 +30,17 @@ jobs:
               git fetch origin main
               git reset --hard origin/main
             fi
-            docker compose down --remove-orphans
             
             # Setup environment file if not exists
             if [ ! -f .env ]; then
               cp .env.example .env || touch .env
             fi
 
-            # Aggressive Docker cleanup to reclaim disk on small VPS volumes.
-            docker system prune -a --volumes -f
-            docker builder prune -a -f
-            # Keep system logs short to avoid root volume growth.
-            journalctl --vacuum-time=2d || true
-            apt-get clean || true
-            docker compose up -d --build --force-recreate
+            # docker system prune -a --volumes -f  <-- REMOVED aggressive deletion
+            # docker builder prune -a -f            <-- REMOVED aggressive deletion
+            
+            # Smart update: only rebuild if files changed, and don't force-recreate everything
+            docker compose up -d --build
             
             # Run migrations and seeders to update content without wiping the database
             echo "--- Updating Content (Migrations & Seeders) ---"
