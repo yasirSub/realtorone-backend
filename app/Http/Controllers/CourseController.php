@@ -3,9 +3,35 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Str;
+use ZipArchive;
 
 class CourseController extends Controller
 {
+    private function extractAssetFilename(?string $url): ?string
+    {
+        if (!$url) {
+            return null;
+        }
+        $path = (string) parse_url($url, PHP_URL_PATH);
+        if ($path === '') {
+            return null;
+        }
+        $basename = basename($path);
+        if ($basename === '' || $basename === '/' || $basename === '.') {
+            return null;
+        }
+        return rawurldecode($basename);
+    }
+
+    private function deleteDirectorySafe(string $dir): void
+    {
+        if (is_dir($dir)) {
+            File::deleteDirectory($dir);
+        }
+    }
+
     /**
      * Display a listing of the resource.
      */
@@ -194,5 +220,191 @@ class CourseController extends Controller
             'size' => $file->getSize(),
             'mime_type' => $file->getMimeType()
         ]);
+    }
+
+    public function downloadLessonBackup($id)
+    {
+        $lesson = \App\Models\CourseLesson::with(['materials', 'module.course'])->findOrFail($id);
+        $tempDir = storage_path('app/temp_lesson_backup_' . $lesson->id . '_' . time());
+        $filesDir = $tempDir . DIRECTORY_SEPARATOR . 'files';
+        $zipName = 'lesson_' . $lesson->id . '_backup_' . date('Y-m-d_H-i-s') . '.zip';
+        $zipPath = storage_path('app/' . $zipName);
+
+        File::ensureDirectoryExists($filesDir);
+
+        try {
+            $materials = [];
+            foreach ($lesson->materials as $material) {
+                $item = [
+                    'title' => $material->title,
+                    'type' => $material->type,
+                    'url' => $material->url,
+                    'thumbnail_url' => $material->thumbnail_url,
+                    'show_download_link' => $material->show_download_link,
+                    'subtitle_source' => $material->subtitle_source,
+                    'subtitles_url' => $material->subtitles_url,
+                    'audio_language' => $material->audio_language,
+                    'settings' => $material->settings,
+                    'count' => $material->count,
+                ];
+
+                $urlFile = $this->extractAssetFilename($material->url);
+                if ($urlFile) {
+                    $source = storage_path('app/public/course-assets/' . $urlFile);
+                    if (file_exists($source)) {
+                        copy($source, $filesDir . DIRECTORY_SEPARATOR . $urlFile);
+                        $item['url_file'] = $urlFile;
+                    }
+                }
+
+                $thumbFile = $this->extractAssetFilename($material->thumbnail_url);
+                if ($thumbFile) {
+                    $source = storage_path('app/public/course-assets/' . $thumbFile);
+                    if (file_exists($source)) {
+                        copy($source, $filesDir . DIRECTORY_SEPARATOR . $thumbFile);
+                        $item['thumbnail_file'] = $thumbFile;
+                    }
+                }
+
+                $materials[] = $item;
+            }
+
+            $payload = [
+                'lesson' => [
+                    'title' => $lesson->title,
+                    'description' => $lesson->description,
+                    'sequence' => $lesson->sequence,
+                    'is_published' => (bool) $lesson->is_published,
+                    'allow_comments' => (bool) $lesson->allow_comments,
+                    'is_preview' => (bool) $lesson->is_preview,
+                    'allow_video_download' => (bool) $lesson->allow_video_download,
+                    'allow_pdf_download' => (bool) $lesson->allow_pdf_download,
+                ],
+                'meta' => [
+                    'course' => $lesson->module?->course?->title,
+                    'module' => $lesson->module?->title,
+                    'exported_at' => now()->toIso8601String(),
+                ],
+                'materials' => $materials,
+            ];
+
+            file_put_contents(
+                $tempDir . DIRECTORY_SEPARATOR . 'lesson_backup.json',
+                json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
+            );
+
+            $zip = new ZipArchive();
+            if ($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+                throw new \RuntimeException('Could not create backup zip.');
+            }
+
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($tempDir, \RecursiveDirectoryIterator::SKIP_DOTS)
+            );
+            foreach ($iterator as $file) {
+                $filePath = $file->getPathname();
+                $localPath = ltrim(str_replace($tempDir, '', $filePath), DIRECTORY_SEPARATOR);
+                $zip->addFile($filePath, str_replace('\\', '/', $localPath));
+            }
+            $zip->close();
+
+            return response()->download($zipPath, $zipName)->deleteFileAfterSend(true);
+        } finally {
+            $this->deleteDirectorySafe($tempDir);
+        }
+    }
+
+    public function restoreLessonBackup(Request $request, $id)
+    {
+        $lesson = \App\Models\CourseLesson::with('materials')->findOrFail($id);
+        $request->validate([
+            'backup_file' => 'required|file|mimes:zip|max:102400',
+        ]);
+
+        $tempDir = storage_path('app/temp_lesson_restore_' . $lesson->id . '_' . time());
+        File::ensureDirectoryExists($tempDir);
+
+        try {
+            $zip = new ZipArchive();
+            if ($zip->open($request->file('backup_file')->getRealPath()) !== true) {
+                throw new \RuntimeException('Could not open backup zip.');
+            }
+            $zip->extractTo($tempDir);
+            $zip->close();
+
+            $jsonPath = $tempDir . DIRECTORY_SEPARATOR . 'lesson_backup.json';
+            if (!file_exists($jsonPath)) {
+                throw new \RuntimeException('Backup metadata missing.');
+            }
+            $data = json_decode((string) file_get_contents($jsonPath), true);
+            if (!is_array($data) || !isset($data['lesson']) || !isset($data['materials'])) {
+                throw new \RuntimeException('Invalid backup format.');
+            }
+
+            $lessonData = $data['lesson'];
+            $lesson->update([
+                'title' => $lessonData['title'] ?? $lesson->title,
+                'description' => $lessonData['description'] ?? null,
+                'sequence' => $lessonData['sequence'] ?? $lesson->sequence,
+                'is_published' => (bool) ($lessonData['is_published'] ?? false),
+                'allow_comments' => (bool) ($lessonData['allow_comments'] ?? false),
+                'is_preview' => (bool) ($lessonData['is_preview'] ?? false),
+                'allow_video_download' => (bool) ($lessonData['allow_video_download'] ?? false),
+                'allow_pdf_download' => (bool) ($lessonData['allow_pdf_download'] ?? false),
+            ]);
+
+            \App\Models\CourseMaterial::where('course_lesson_id', $lesson->id)->delete();
+
+            $filesDir = $tempDir . DIRECTORY_SEPARATOR . 'files';
+            $assetTargetDir = storage_path('app/public/course-assets');
+            File::ensureDirectoryExists($assetTargetDir);
+
+            $createdCount = 0;
+            foreach ((array) $data['materials'] as $material) {
+                $newUrl = $material['url'] ?? null;
+                $newThumb = $material['thumbnail_url'] ?? null;
+
+                if (!empty($material['url_file'])) {
+                    $src = $filesDir . DIRECTORY_SEPARATOR . basename((string) $material['url_file']);
+                    if (file_exists($src)) {
+                        $newName = time() . '_' . Str::random(6) . '_' . basename((string) $material['url_file']);
+                        copy($src, $assetTargetDir . DIRECTORY_SEPARATOR . $newName);
+                        $newUrl = '/api/stream/' . rawurlencode($newName);
+                    }
+                }
+
+                if (!empty($material['thumbnail_file'])) {
+                    $src = $filesDir . DIRECTORY_SEPARATOR . basename((string) $material['thumbnail_file']);
+                    if (file_exists($src)) {
+                        $newName = time() . '_' . Str::random(6) . '_' . basename((string) $material['thumbnail_file']);
+                        copy($src, $assetTargetDir . DIRECTORY_SEPARATOR . $newName);
+                        $newThumb = '/api/stream/' . rawurlencode($newName);
+                    }
+                }
+
+                \App\Models\CourseMaterial::create([
+                    'course_lesson_id' => $lesson->id,
+                    'title' => $material['title'] ?? null,
+                    'type' => $material['type'] ?? 'PDF',
+                    'url' => $newUrl,
+                    'thumbnail_url' => $newThumb,
+                    'show_download_link' => (bool) ($material['show_download_link'] ?? false),
+                    'subtitle_source' => $material['subtitle_source'] ?? null,
+                    'subtitles_url' => $material['subtitles_url'] ?? null,
+                    'audio_language' => $material['audio_language'] ?? null,
+                    'settings' => $material['settings'] ?? null,
+                    'count' => (int) ($material['count'] ?? 1),
+                ]);
+                $createdCount++;
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Lesson restored successfully.',
+                'data' => ['materials_restored' => $createdCount],
+            ]);
+        } finally {
+            $this->deleteDirectorySafe($tempDir);
+        }
     }
 }

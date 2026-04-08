@@ -17,16 +17,46 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
+use Laravel\Sanctum\PersonalAccessToken;
 
 // Helper function to get authenticated user
 function getAuthUser(Request $request)
 {
+    if ($request->user()) {
+        return $request->user();
+    }
+
     $token = $request->bearerToken();
     if (! $token) {
         return null;
     }
 
+    // Sanctum bearer token format: {id}|{plainTextToken}
+    if (str_contains($token, '|')) {
+        $accessToken = PersonalAccessToken::findToken($token);
+        if ($accessToken && $accessToken->tokenable instanceof User) {
+            return $accessToken->tokenable;
+        }
+    }
+
     return User::where('remember_token', $token)->first();
+}
+
+function isAdminUser($user): bool
+{
+    if (! $user instanceof User) {
+        return false;
+    }
+
+    if ((bool) ($user->is_admin ?? false)) {
+        return true;
+    }
+
+    if (method_exists($user, 'tokenCan') && $user->tokenCan('admin:manage')) {
+        return true;
+    }
+
+    return false;
 }
 
 function seedDefaultActivityTypes()
@@ -154,7 +184,7 @@ Route::get('/legal-documents/{slug}', function (string $slug) {
 
 Route::get('/admin/legal-documents', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
     $rows = LegalDocument::query()
@@ -170,7 +200,7 @@ Route::get('/admin/legal-documents', function (Request $request) {
  */
 Route::get('/admin/settings/app-config', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -186,11 +216,11 @@ Route::get('/admin/settings/app-config', function (Request $request) {
             'updated_at' => (string) cache('app_config_updated_at', ''),
         ],
     ]);
-});
+})->middleware(['auth:sanctum', 'abilities:admin:manage']);
 
 Route::post('/admin/settings/app-config', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -225,13 +255,19 @@ Route::post('/admin/settings/app-config', function (Request $request) {
     }
 
     cache(['app_config_updated_at' => now()->toIso8601String()], $ttl);
+    Log::info('App runtime config updated', [
+        'actor_user_id' => $admin->id,
+        'maintenance_enabled' => $data['maintenance_enabled'] ?? null,
+        'min_android_version' => $data['min_android_version'] ?? null,
+        'min_ios_version' => $data['min_ios_version'] ?? null,
+    ]);
 
     return response()->json(['success' => true]);
-});
+})->middleware(['auth:sanctum', 'abilities:admin:manage']);
 
 Route::get('/admin/legal-documents/{slug}', function (Request $request, string $slug) {
     $admin = getAuthUser($request);
-    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
     if (! in_array($slug, ['privacy', 'terms'], true)) {
@@ -252,7 +288,7 @@ Route::get('/admin/legal-documents/{slug}', function (Request $request, string $
 
 Route::put('/admin/legal-documents/{slug}', function (Request $request, string $slug) {
     $admin = getAuthUser($request);
-    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
     if (! in_array($slug, ['privacy', 'terms'], true)) {
@@ -289,7 +325,7 @@ Route::delete('/chat/history/{sessionId}', [\App\Http\Controllers\ChatController
 // Admin: Reven AI inbox (monitor all user chat sessions/messages)
 Route::get('/admin/ai/users', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -330,7 +366,7 @@ Route::get('/admin/ai/users', function (Request $request) {
 // Admin: AI runtime settings (API key + custom knowledge base text)
 Route::get('/admin/ai/settings', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -377,7 +413,7 @@ Route::get('/admin/ai/settings', function (Request $request) {
 
 Route::post('/admin/ai/settings', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -488,7 +524,7 @@ Route::post('/admin/ai/settings', function (Request $request) {
 
 Route::post('/admin/ai/settings/knowledge-base-pdf', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -566,7 +602,7 @@ Route::post('/admin/ai/settings/knowledge-base-pdf', function (Request $request)
 
 Route::post('/admin/ai/settings/kb-block/{blockId}/pdf', function (Request $request, string $blockId) {
     $admin = getAuthUser($request);
-    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -639,7 +675,7 @@ Route::post('/admin/ai/settings/kb-block/{blockId}/pdf', function (Request $requ
 
 Route::delete('/admin/ai/settings/kb-block/{blockId}', function (Request $request, string $blockId) {
     $admin = getAuthUser($request);
-    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -670,7 +706,7 @@ Route::delete('/admin/ai/settings/kb-block/{blockId}', function (Request $reques
 
 Route::get('/admin/ai/users/{userId}/sessions', function (Request $request, int $userId) {
     $admin = getAuthUser($request);
-    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -685,7 +721,7 @@ Route::get('/admin/ai/users/{userId}/sessions', function (Request $request, int 
 
 Route::get('/admin/ai/users/{userId}/usage', function (Request $request, int $userId) {
     $admin = getAuthUser($request);
-    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -719,7 +755,7 @@ Route::get('/admin/ai/users/{userId}/usage', function (Request $request, int $us
 
 Route::get('/admin/ai/sessions/{sessionId}/messages', function (Request $request, int $sessionId) {
     $admin = getAuthUser($request);
-    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -737,7 +773,7 @@ Route::post('/admin/ai/users/{userId}/send', [\App\Http\Controllers\ChatControll
 // Admin: enabled AI KB courses for a user (based on user's membership tier)
 Route::get('/admin/ai/users/{userId}/kb', function (Request $request, int $userId) {
     $admin = getAuthUser($request);
-    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -765,7 +801,7 @@ Route::get('/admin/ai/users/{userId}/kb', function (Request $request, int $userI
 // Admin: human handoff tickets
 Route::post('/admin/ai/tickets', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -787,7 +823,7 @@ Route::post('/admin/ai/tickets', function (Request $request) {
 
 Route::get('/admin/ai/tickets', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -801,7 +837,7 @@ Route::get('/admin/ai/tickets', function (Request $request) {
 
 Route::post('/admin/ai/tickets/{ticketId}/resolve', function (Request $request, int $ticketId) {
     $admin = getAuthUser($request);
-    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -991,7 +1027,7 @@ Route::post('/admin/users/{userId}/import-excel', function (Request $request, $u
     if (! $auth) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
-    if (strtolower((string) $auth->email) !== 'admin@realtorone.com') {
+    if (! isAdminUser($auth)) {
         return response()->json(['success' => false, 'message' => 'Admin access required'], 403);
     }
 
@@ -1141,8 +1177,6 @@ Route::delete('/admin/coupons/{id}', function ($id) {
 // Courses Management
 // Upload route MUST come before resource route to avoid 'upload' being matched as a course ID
 Route::post('admin/courses/upload', [\App\Http\Controllers\CourseController::class, 'uploadFile']);
-Route::get('admin/system/backup', [\App\Http\Controllers\BackupController::class, 'export']);
-Route::post('admin/system/restore', [\App\Http\Controllers\BackupController::class, 'import']);
 Route::resource('admin/courses', \App\Http\Controllers\CourseController::class);
 Route::post('admin/courses/{id}/modules', [\App\Http\Controllers\CourseController::class, 'storeModule']);
 Route::put('admin/modules/{id}', [\App\Http\Controllers\CourseController::class, 'updateModule']);
@@ -1155,6 +1189,8 @@ Route::delete('admin/lessons/{id}', [\App\Http\Controllers\CourseController::cla
 Route::post('admin/lessons/{id}/materials', [\App\Http\Controllers\CourseController::class, 'storeMaterial']);
 Route::put('admin/materials/{id}', [\App\Http\Controllers\CourseController::class, 'updateMaterial']);
 Route::delete('admin/materials/{id}', [\App\Http\Controllers\CourseController::class, 'destroyMaterial']);
+Route::get('admin/lessons/{id}/backup', [\App\Http\Controllers\CourseController::class, 'downloadLessonBackup']);
+Route::post('admin/lessons/{id}/backup/restore', [\App\Http\Controllers\CourseController::class, 'restoreLessonBackup']);
 
 // AI Knowledge Base visibility per course + tier (admin)
 Route::get('admin/courses/{id}/ai-visibility', function ($id) {
@@ -2074,37 +2110,28 @@ Route::post('/subscriptions/purchase', function (Request $request) {
 // Admin settings for configurable user activity points
 Route::get('/admin/settings/user-activity-points', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
     // Default 20 if not set
     $points = cache('user_activity_points', 20);
 
     return response()->json(['success' => true, 'points' => $points]);
-});
+})->middleware(['auth:sanctum', 'abilities:admin:manage']);
 
 Route::post('/admin/settings/user-activity-points', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
     $data = $request->validate(['points' => 'required|integer|min:1|max:100']);
     cache(['user_activity_points' => $data['points']], now()->addYears(5));
 
     return response()->json(['success' => true, 'points' => $data['points']]);
-});
+})->middleware(['auth:sanctum', 'abilities:admin:manage']);
 
 Route::post('/admin/login', function (Request $request) {
     Log::info('Admin Login Attempt', ['email' => $request->email]);
-
-    // Ensure admin user exists (create/update for initial access)
-    \App\Models\User::updateOrCreate(
-        ['email' => 'admin@realtorone.com'],
-        [
-            'name' => 'Admin Operator',
-            'password' => \Illuminate\Support\Facades\Hash::make('password123'),
-        ]
-    );
 
     $credentials = $request->validate([
         'email' => ['required', 'email'],
@@ -2114,8 +2141,9 @@ Route::post('/admin/login', function (Request $request) {
     $user = \App\Models\User::where('email', $credentials['email'])->first();
 
     if ($user && \Illuminate\Support\Facades\Hash::check($credentials['password'], $user->password)) {
-        $token = bin2hex(random_bytes(32));
-        $user->update(['remember_token' => $token]);
+        // Revoke older tokens and issue scoped admin token.
+        $user->tokens()->delete();
+        $token = $user->createToken('admin-panel', ['admin:manage'])->plainTextToken;
 
         Log::info('Admin Login Success', ['user_id' => $user->id]);
 
@@ -2975,7 +3003,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/admin/diagnosis/questions', function (Request $request) {
         $admin = getAuthUser($request);
-        if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -2998,7 +3026,7 @@ Route::group(['middleware' => []], function () {
 
     Route::post('/admin/diagnosis/questions', function (Request $request) {
         $admin = getAuthUser($request);
-        if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3026,7 +3054,7 @@ Route::group(['middleware' => []], function () {
 
     Route::put('/admin/diagnosis/questions/{id}', function (Request $request, $id) {
         $admin = getAuthUser($request);
-        if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3055,7 +3083,7 @@ Route::group(['middleware' => []], function () {
 
     Route::delete('/admin/diagnosis/questions/{id}', function (Request $request, $id) {
         $admin = getAuthUser($request);
-        if (! $admin || $admin->email !== 'admin@realtorone.com') {
+    if (! isAdminUser($admin)) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -5502,9 +5530,12 @@ Route::group(['middleware' => []], function () {
 
 // Disaster Recovery & System Backups (Admin Only)
 Route::group(['prefix' => 'admin/system'], function() {
-    Route::get('/backups', [\App\Http\Controllers\BackupController::class, 'index']);
-    Route::get('/backups/download/{filename}', [\App\Http\Controllers\BackupController::class, 'download']);
-    Route::delete('/backups/{filename}', [\App\Http\Controllers\BackupController::class, 'destroy']);
-    Route::get('/backup', [\App\Http\Controllers\BackupController::class, 'export']);
-    Route::post('/restore', [\App\Http\Controllers\BackupController::class, 'import']);
+    Route::middleware(['auth:sanctum', 'abilities:admin:manage'])->group(function () {
+        Route::get('/backups', [\App\Http\Controllers\BackupController::class, 'index']);
+        Route::get('/backups/download/{filename}', [\App\Http\Controllers\BackupController::class, 'download']);
+        Route::delete('/backups/{filename}', [\App\Http\Controllers\BackupController::class, 'destroy']);
+        Route::get('/backup', [\App\Http\Controllers\BackupController::class, 'export']);
+        Route::get('/backup/modules', [\App\Http\Controllers\BackupController::class, 'modules']);
+        Route::post('/restore', [\App\Http\Controllers\BackupController::class, 'import']);
+    });
 });
