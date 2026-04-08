@@ -43,6 +43,10 @@ jobs:
             # --remove-orphans ensures old containers are cleaned up without deleting everything
             docker compose up -d --build --remove-orphans
             
+            # Wait for MySQL to be ready before running migrations
+            echo "Waiting for MySQL to be ready..."
+            docker exec backend-mysql-1 mysqladmin ping -h 127.0.0.1 -uroot -ppassword --silent --wait=30
+            
             # Run migrations and seeders to update content without wiping the database
             echo "--- Updating Content (Migrations & Seeders) ---"
             docker exec backend-app-1 php artisan migrate --force
