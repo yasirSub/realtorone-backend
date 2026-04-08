@@ -60,6 +60,11 @@ jobs:
               
               docker exec -i backend-mysql-1 mysql -h 127.0.0.1 -uroot -ppassword "$DB_NAME" < "realtorone (4).sql"
               echo "Database import completed."
+              
+              # Run seeders after fresh import
+              echo "--- Running Seeders ---"
+              docker exec backend-app-1 php artisan db:seed --force
+              echo "Seeders completed."
             else
               echo "Database dump not found, skipping import."
             fi
