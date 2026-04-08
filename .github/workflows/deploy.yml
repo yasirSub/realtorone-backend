@@ -45,17 +45,22 @@ jobs:
             
             # Use a robust wait loop that survives container restarts
             echo "Waiting for services to reach running state..."
-            for i in {1..15}; do
-              STATUS=$(docker inspect -f '{{.State.Status}}' backend-mysql-1 2>/dev/null || echo "not_found")
-              echo "MySQL Status: $STATUS"
-              if [ "$STATUS" == "running" ]; then
-                # Once running, wait for actual service readiness
+            for i in {1..20}; do
+              MYSQL_STATUS=$(docker inspect -f '{{.State.Status}}' backend-mysql-1 2>/dev/null || echo "not_found")
+              APP_STATUS=$(docker inspect -f '{{.State.Status}}' backend-app-1 2>/dev/null || echo "not_found")
+              
+              echo "MySQL Status: $MYSQL_STATUS | App Status: $APP_STATUS (Attempt $i/20)"
+              
+              if [ "$MYSQL_STATUS" == "running" ] && [ "$APP_STATUS" == "running" ]; then
+                # Check if MySQL is actually accepting connections
                 if docker exec backend-mysql-1 mysqladmin ping -h 127.0.0.1 -uroot -ppassword --silent; then
-                  echo "MySQL is ready!"
+                  echo "Services are ready!"
+                  # Give the network one more second to settle
+                  sleep 2
                   break
                 fi
               fi
-              sleep 4
+              sleep 5
             done
             
             # Run migrations without blocking on specific container status if it's transient
