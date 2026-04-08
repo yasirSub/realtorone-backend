@@ -30,8 +30,11 @@ services:
             DB_DATABASE: realtorone
             DB_USERNAME: sail
             DB_PASSWORD: password
-            FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
-            FIREBASE_CREDENTIALS_PATH: ${FIREBASE_CREDENTIALS_PATH:-}
+            QUEUE_CONNECTION: ${QUEUE_CONNECTION:-database}
+            RUN_QUEUE_WORKER: ${RUN_QUEUE_WORKER:-1}
+            RUN_SCHEDULER: ${RUN_SCHEDULER:-1}
+            FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-realtor-one}
+            FIREBASE_CREDENTIALS_PATH: ${FIREBASE_CREDENTIALS_PATH:-/var/www/html/realtor-one-firebase-adminsdk-fbsvc-4bdaeea92a.json}
             FIREBASE_CREDENTIALS_JSON: ${FIREBASE_CREDENTIALS_JSON:-}
         depends_on:
             - mysql
