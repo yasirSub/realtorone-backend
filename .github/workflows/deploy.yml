@@ -28,4 +28,8 @@ jobs:
               git reset --hard origin/main
             fi
             docker compose down --remove-orphans
+            # Prune old images to free up space and ensure clean build
+            docker image prune -f
             docker compose up -d --build --force-recreate
+            # Ensure the services are actually running
+            docker compose ps
