@@ -31,6 +31,12 @@ jobs:
               git reset --hard origin/main
             fi
             docker compose down --remove-orphans
+            
+            # Setup environment file if not exists
+            if [ ! -f .env ]; then
+              cp .env.example .env || touch .env
+            fi
+
             # Aggressive Docker cleanup to reclaim disk on small VPS volumes.
             docker system prune -a --volumes -f
             docker builder prune -a -f
