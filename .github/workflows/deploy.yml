@@ -48,7 +48,9 @@ jobs:
             # Import database dump
             echo "--- Importing Database ---"
             if [ -f "realtorone (4).sql" ]; then
-              docker exec -i backend-mysql-1 mysql -uroot -ppassword realtorone < "realtorone (4).sql"
+              # Wait for MySQL to be ready inside the container
+              docker exec backend-mysql-1 mysqladmin ping -h 127.0.0.1 -uroot -ppassword --silent --wait=30
+              docker exec -i backend-mysql-1 mysql -h 127.0.0.1 -uroot -ppassword realtorone < "realtorone (4).sql"
               echo "Database import completed."
             else
               echo "Database dump not found, skipping import."
