@@ -103,6 +103,36 @@ Route::get('/health', function () {
     ]);
 });
 
+/**
+ * Public app runtime config (mobile startup).
+ * Keep this endpoint unauthenticated so the app can decide whether to continue or show maintenance/update UI.
+ */
+Route::get('/app-config', function () {
+    $maintenanceEnabled = (bool) cache('app_config_maintenance_enabled', false);
+    $maintenanceMessage = (string) cache('app_config_maintenance_message', '');
+
+    $minAndroid = (string) cache('app_config_min_android_version', '');
+    $minIos = (string) cache('app_config_min_ios_version', '');
+
+    $androidStoreUrl = (string) cache('app_config_android_store_url', '');
+    $iosStoreUrl = (string) cache('app_config_ios_store_url', '');
+
+    $updatedAt = (string) cache('app_config_updated_at', '');
+
+    return response()->json([
+        'success' => true,
+        'data' => [
+            'maintenance_enabled' => $maintenanceEnabled,
+            'maintenance_message' => $maintenanceMessage,
+            'min_android_version' => $minAndroid,
+            'min_ios_version' => $minIos,
+            'android_store_url' => $androidStoreUrl,
+            'ios_store_url' => $iosStoreUrl,
+            'updated_at' => $updatedAt,
+        ],
+    ]);
+});
+
 /** Public legal documents (mobile WebView + website). */
 Route::get('/legal-documents/{slug}', function (string $slug) {
     if (! in_array($slug, ['privacy', 'terms'], true)) {
@@ -132,6 +162,71 @@ Route::get('/admin/legal-documents', function (Request $request) {
         ->get(['slug', 'title', 'updated_at']);
 
     return response()->json(['success' => true, 'data' => $rows]);
+});
+
+/**
+ * Admin: App runtime config (maintenance + min versions).
+ * Stored in cache with long TTL, mirroring other admin settings patterns.
+ */
+Route::get('/admin/settings/app-config', function (Request $request) {
+    $admin = getAuthUser($request);
+    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+
+    return response()->json([
+        'success' => true,
+        'data' => [
+            'maintenance_enabled' => (bool) cache('app_config_maintenance_enabled', false),
+            'maintenance_message' => (string) cache('app_config_maintenance_message', ''),
+            'min_android_version' => (string) cache('app_config_min_android_version', ''),
+            'min_ios_version' => (string) cache('app_config_min_ios_version', ''),
+            'android_store_url' => (string) cache('app_config_android_store_url', ''),
+            'ios_store_url' => (string) cache('app_config_ios_store_url', ''),
+            'updated_at' => (string) cache('app_config_updated_at', ''),
+        ],
+    ]);
+});
+
+Route::post('/admin/settings/app-config', function (Request $request) {
+    $admin = getAuthUser($request);
+    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+
+    $data = $request->validate([
+        'maintenance_enabled' => ['sometimes', 'boolean'],
+        'maintenance_message' => ['nullable', 'string', 'max:2000'],
+        'min_android_version' => ['nullable', 'string', 'max:50'],
+        'min_ios_version' => ['nullable', 'string', 'max:50'],
+        'android_store_url' => ['nullable', 'string', 'max:2048'],
+        'ios_store_url' => ['nullable', 'string', 'max:2048'],
+    ]);
+
+    $ttl = now()->addYears(5);
+
+    if (array_key_exists('maintenance_enabled', $data)) {
+        cache(['app_config_maintenance_enabled' => (bool) $data['maintenance_enabled']], $ttl);
+    }
+    if (array_key_exists('maintenance_message', $data)) {
+        cache(['app_config_maintenance_message' => (string) ($data['maintenance_message'] ?? '')], $ttl);
+    }
+    if (array_key_exists('min_android_version', $data)) {
+        cache(['app_config_min_android_version' => (string) ($data['min_android_version'] ?? '')], $ttl);
+    }
+    if (array_key_exists('min_ios_version', $data)) {
+        cache(['app_config_min_ios_version' => (string) ($data['min_ios_version'] ?? '')], $ttl);
+    }
+    if (array_key_exists('android_store_url', $data)) {
+        cache(['app_config_android_store_url' => (string) ($data['android_store_url'] ?? '')], $ttl);
+    }
+    if (array_key_exists('ios_store_url', $data)) {
+        cache(['app_config_ios_store_url' => (string) ($data['ios_store_url'] ?? '')], $ttl);
+    }
+
+    cache(['app_config_updated_at' => now()->toIso8601String()], $ttl);
+
+    return response()->json(['success' => true]);
 });
 
 Route::get('/admin/legal-documents/{slug}', function (Request $request, string $slug) {
@@ -1977,7 +2072,11 @@ Route::post('/subscriptions/purchase', function (Request $request) {
 });
 
 // Admin settings for configurable user activity points
-Route::get('/admin/settings/user-activity-points', function () {
+Route::get('/admin/settings/user-activity-points', function (Request $request) {
+    $admin = getAuthUser($request);
+    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
     // Default 20 if not set
     $points = cache('user_activity_points', 20);
 
@@ -1985,6 +2084,10 @@ Route::get('/admin/settings/user-activity-points', function () {
 });
 
 Route::post('/admin/settings/user-activity-points', function (Request $request) {
+    $admin = getAuthUser($request);
+    if (! $admin || $admin->email !== 'admin@realtorone.com') {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
     $data = $request->validate(['points' => 'required|integer|min:1|max:100']);
     cache(['user_activity_points' => $data['points']], now()->addYears(5));
 
