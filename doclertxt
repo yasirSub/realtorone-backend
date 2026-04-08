@@ -1,0 +1,79 @@
+services:
+    app:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        restart: always
+        ports:
+            - '8000:8000'
+        volumes:
+            - ./php.ini:/usr/local/etc/php/php.ini:ro
+            - /root/realtorone/backend/storage/app/public/course-assets:/var/www/html/storage/app/public/course-assets
+        environment:
+            APP_ENV: ${APP_ENV:-production}
+            APP_KEY: ${APP_KEY:-base64:k7rgmQg7V8UNLfXOQd0CimcjJQWCW5ODov2KzdLSgoA=}
+            APP_DEBUG: ${APP_DEBUG:-false}
+            APP_URL: ${APP_URL:-http://localhost:8000}
+            WAIT_FOR_DB: ${WAIT_FOR_DB:-1}
+            RUN_MIGRATIONS: ${RUN_MIGRATIONS:-1}
+            RUN_SEED: ${RUN_SEED:-0}
+            DB_CONNECTION: mysql
+            DB_HOST: mysql
+            DB_PORT: 3306
+            DB_DATABASE: realtorone
+            DB_USERNAME: sail
+            DB_PASSWORD: password
+            QUEUE_CONNECTION: ${QUEUE_CONNECTION:-database}
+            RUN_QUEUE_WORKER: ${RUN_QUEUE_WORKER:-1}
+            RUN_SCHEDULER: ${RUN_SCHEDULER:-1}
+            FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-realtor-one}
+            FIREBASE_CREDENTIALS_PATH: ${FIREBASE_CREDENTIALS_PATH:-/var/www/html/realtor-one-firebase-adminsdk-fbsvc-4bdaeea92a.json}
+            FIREBASE_CREDENTIALS_JSON: ${FIREBASE_CREDENTIALS_JSON:-}
+        depends_on:
+            - mysql
+        networks:
+            - backend-network
+
+    mysql:
+        image: 'mysql:8.0'
+        restart: always
+        ports:
+            - '3306:3306'
+        environment:
+            MYSQL_ROOT_PASSWORD: password
+            MYSQL_DATABASE: realtorone
+            MYSQL_USER: sail
+            MYSQL_PASSWORD: password
+        volumes:
+            - 'mysql-data:/var/lib/mysql'
+        healthcheck:
+            test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+            interval: 5s
+            timeout: 3s
+            retries: 30
+        networks:
+            - backend-network
+
+    phpmyadmin:
+        image: phpmyadmin/phpmyadmin
+        restart: always
+        ports:
+            - '8080:80'
+        environment:
+            PMA_HOST: mysql
+            PMA_PORT: 3306
+            PMA_USER: sail
+            PMA_PASSWORD: password
+            MYSQL_ROOT_PASSWORD: password
+        depends_on:
+            - mysql
+        networks:
+            - backend-network
+
+networks:
+    backend-network:
+        driver: bridge
+
+volumes:
+    mysql-data:
+        driver: local

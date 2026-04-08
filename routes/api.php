@@ -35,7 +35,7 @@ function getAuthUser(Request $request)
     if (str_contains($token, '|')) {
         $accessToken = PersonalAccessToken::findToken($token);
         if ($accessToken && $accessToken->tokenable instanceof User) {
-            return $accessToken->tokenable;
+            return $accessToken->tokenable->withAccessToken($accessToken);
         }
     }
 
