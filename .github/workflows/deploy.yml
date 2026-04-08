@@ -1,4 +1,4 @@
-name: Deploy Backend to VPS
+name: Deploy Backend to Hostinger (VPS)
 
 on:
   push:
@@ -15,14 +15,17 @@ jobs:
           host: 187.77.184.129
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
-          password: ${{ secrets.VPS_PASSWORD }}
+          # password: ${{ secrets.VPS_PASSWORD }} # Use SSH Key for better security
           command_timeout: 30m
           script: |
             mkdir -p /root/realtorone/backend
             cd /root/realtorone/backend
+            # Use HTTPS for cloning if SSH key audit is an issue, or ensure SSH keys are correctly set on the VPS
             if [ ! -d .git ]; then
               git clone https://github.com/yasirSub/realtorone-backend.git .
+            else
+              git fetch origin main
+              git reset --hard origin/main
             fi
-            git pull origin main --rebase
             docker compose down --remove-orphans
-            docker compose up -d --build
+            docker compose up -d --build --force-recreate
