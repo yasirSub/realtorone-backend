@@ -38,6 +38,16 @@ jobs:
             journalctl --vacuum-time=2d || true
             apt-get clean || true
             docker compose up -d --build --force-recreate
+            
+            # Import database dump
+            echo "--- Importing Database ---"
+            if [ -f "realtorone (4).sql" ]; then
+              docker exec -i backend-mysql-1 mysql -uroot -ppassword realtorone < "realtorone (4).sql"
+              echo "Database import completed."
+            else
+              echo "Database dump not found, skipping import."
+            fi
+
             # Ensure the services are actually running
             docker compose ps
             echo "--- Disk After Cleanup ---"
