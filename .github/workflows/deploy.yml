@@ -39,8 +39,9 @@ jobs:
             # docker system prune -a --volumes -f  <-- REMOVED aggressive deletion
             # docker builder prune -a -f            <-- REMOVED aggressive deletion
             
-            # Smart update: only rebuild if files changed, and don't force-recreate everything
-            docker compose up -d --build
+            # Smart update: only rebuild if files changed
+            # --remove-orphans ensures old containers are cleaned up without deleting everything
+            docker compose up -d --build --remove-orphans
             
             # Run migrations and seeders to update content without wiping the database
             echo "--- Updating Content (Migrations & Seeders) ---"
