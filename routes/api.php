@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Admin\NotificationBroadcastController;
+use App\Http\Controllers\API\NotificationSettingController;
 use App\Support\ClientMeetingFlow;
 use App\Support\ColdCallingFlow;
 use App\Support\CrmPipeline;
@@ -314,6 +315,14 @@ Route::put('/admin/legal-documents/{slug}', function (Request $request, string $
             'updated_at' => $doc->updated_at?->toIso8601String(),
         ],
     ]);
+});
+
+// Admin: Notification Settings Management
+Route::middleware(['auth:sanctum', 'abilities:admin:manage'])->prefix('admin/notification-settings')->group(function () {
+    Route::get('/', [NotificationSettingController::class, 'index']);
+    Route::post('/', [NotificationSettingController::class, 'store']);
+    Route::get('/{key}', [NotificationSettingController::class, 'show']);
+    Route::put('/{id}', [NotificationSettingController::class, 'update']);
 });
 
 // Reven chatbot
@@ -959,6 +968,18 @@ Route::get('/admin/users/{id}/activities', function ($id) {
         ->get();
 
     return response()->json(['success' => true, 'data' => $activities]);
+});
+
+Route::put('/admin/users/{id}', function (Illuminate\Http\Request $request, $id) {
+    $user = \App\Models\User::findOrFail($id);
+    $data = $request->validate([
+        'timezone' => 'nullable|string',
+    ]);
+    if (isset($data['timezone'])) {
+        $user->timezone = $data['timezone'];
+    }
+    $user->save();
+    return response()->json(['success' => true, 'data' => $user]);
 });
 
 Route::delete('/admin/users/{id}', function ($id) {
@@ -1946,8 +1967,8 @@ Route::get('/user/points-history', function (Request $request) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
-    $limit = $request->get('limit', 100); // Default to last 100 entries
-    $offset = $request->get('offset', 0);
+    $limit = $request->input('limit', 100); // Default to last 100 entries
+    $offset = $request->input('offset', 0);
 
     $history = DB::table('activities')
         ->where('user_id', $user->id)
@@ -2394,6 +2415,7 @@ Route::get('/admin/activity-types/{id}/daily-logs', function (Request $request, 
 Route::put('/admin/activity-types/{id}/daily-logs/{day}', function (Request $request, $id, $day) {
     $activityType = \App\Models\ActivityType::findOrFail($id);
     $dayNumber = (int) $day;
+
     if ($dayNumber < 1 || $dayNumber > 365) {
         return response()->json(['success' => false, 'message' => 'Invalid day number'], 422);
     }
@@ -2405,6 +2427,11 @@ Route::put('/admin/activity-types/{id}/daily-logs/{day}', function (Request $req
         'audio_url' => 'nullable|string|max:2048',
         'required_listen_percent' => 'nullable|integer|min:0|max:100',
         'require_user_response' => 'nullable|boolean',
+        'notification_enabled' => 'nullable|boolean',
+        'morning_reminder_enabled' => 'nullable|boolean',
+        'evening_reminder_enabled' => 'nullable|boolean',
+        'morning_reminder_time' => 'nullable|string',
+        'evening_reminder_time' => 'nullable|string',
     ]);
 
     DB::table('activity_type_daily_logs')->updateOrInsert(
@@ -2419,6 +2446,11 @@ Route::put('/admin/activity-types/{id}/daily-logs/{day}', function (Request $req
             'audio_url' => $data['audio_url'] ?? null,
             'required_listen_percent' => isset($data['required_listen_percent']) ? (int) $data['required_listen_percent'] : 0,
             'require_user_response' => isset($data['require_user_response']) ? (bool) $data['require_user_response'] : false,
+            'notification_enabled' => isset($data['notification_enabled']) ? (bool) $data['notification_enabled'] : false,
+            'morning_reminder_enabled' => isset($data['morning_reminder_enabled']) ? (bool) $data['morning_reminder_enabled'] : true,
+            'evening_reminder_enabled' => isset($data['evening_reminder_enabled']) ? (bool) $data['evening_reminder_enabled'] : true,
+            'morning_reminder_time' => $data['morning_reminder_time'] ?? '09:00',
+            'evening_reminder_time' => $data['evening_reminder_time'] ?? '18:00',
             'updated_at' => now(),
             'created_at' => now(),
         ]
@@ -2464,6 +2496,11 @@ Route::post('/admin/activity-types/{id}/daily-logs/bulk', function (Request $req
         'entries.*.audio_url' => 'nullable|string|max:2048',
         'entries.*.required_listen_percent' => 'nullable|integer|min:0|max:100',
         'entries.*.require_user_response' => 'nullable|boolean',
+        'entries.*.notification_enabled' => 'nullable|boolean',
+        'entries.*.morning_reminder_enabled' => 'nullable|boolean',
+        'entries.*.evening_reminder_enabled' => 'nullable|boolean',
+        'entries.*.morning_reminder_time' => 'nullable|string',
+        'entries.*.evening_reminder_time' => 'nullable|string',
     ]);
 
     $now = now();
@@ -2477,6 +2514,11 @@ Route::post('/admin/activity-types/{id}/daily-logs/bulk', function (Request $req
             'audio_url' => $entry['audio_url'] ?? null,
             'required_listen_percent' => isset($entry['required_listen_percent']) ? (int) $entry['required_listen_percent'] : 0,
             'require_user_response' => isset($entry['require_user_response']) ? (bool) $entry['require_user_response'] : false,
+            'notification_enabled' => isset($entry['notification_enabled']) ? (bool) $entry['notification_enabled'] : false,
+            'morning_reminder_enabled' => isset($entry['morning_reminder_enabled']) ? (bool) $entry['morning_reminder_enabled'] : true,
+            'evening_reminder_enabled' => isset($entry['evening_reminder_enabled']) ? (bool) $entry['evening_reminder_enabled'] : true,
+            'morning_reminder_time' => $entry['morning_reminder_time'] ?? '09:00',
+            'evening_reminder_time' => $entry['evening_reminder_time'] ?? '18:00',
             'created_at' => $now,
             'updated_at' => $now,
         ];
@@ -2485,13 +2527,56 @@ Route::post('/admin/activity-types/{id}/daily-logs/bulk', function (Request $req
     DB::table('activity_type_daily_logs')->upsert(
         $rows,
         ['activity_type_id', 'day_number'],
-        ['task_description', 'script_idea', 'feedback', 'audio_url', 'required_listen_percent', 'require_user_response', 'updated_at']
+        ['task_description', 'script_idea', 'feedback', 'audio_url', 'required_listen_percent', 'require_user_response', 'notification_enabled', 'morning_reminder_enabled', 'evening_reminder_enabled', 'morning_reminder_time', 'evening_reminder_time', 'updated_at']
     );
 
     return response()->json([
         'success' => true,
         'count' => count($rows),
     ]);
+});
+
+Route::get('/admin/daily-logs/all-reminders', function () {
+    $reminders = DB::table('activity_type_daily_logs')
+        ->join('activity_types', 'activity_types.id', '=', 'activity_type_daily_logs.activity_type_id')
+        ->where('activity_type_daily_logs.notification_enabled', true)
+        ->select(
+            'activity_type_daily_logs.day_number',
+            'activity_type_daily_logs.reminder_time',
+            'activity_type_daily_logs.task_description',
+            'activity_types.name as activity_name',
+            'activity_types.id as activity_id'
+        )
+        ->orderBy('activity_type_daily_logs.day_number')
+        ->get();
+
+    return response()->json([
+        'success' => true,
+        'data' => $reminders,
+    ]);
+});
+
+Route::get('/admin/notifications/workflow-triggers', function () {
+    $triggers = DB::table('notification_workflow_triggers')->get();
+    return response()->json([
+        'success' => true,
+        'data' => $triggers,
+    ]);
+});
+
+Route::put('/admin/notifications/workflow-triggers/{id}', function (Illuminate\Http\Request $request, $id) {
+    $data = $request->validate([
+        'is_enabled' => 'boolean',
+        'title_template' => 'string|max:255',
+        'body_template' => 'string',
+        'delay_minutes' => 'integer|min:0',
+    ]);
+
+    DB::table('notification_workflow_triggers')
+        ->where('id', $id)
+        ->update(array_merge($data, ['updated_at' => now()]));
+
+    return response()->json(['success' => true]);
 });
 
 Route::delete('/admin/activity-types/{id}', function ($id) {
@@ -3131,7 +3216,7 @@ Route::group(['middleware' => []], function () {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
-        $date = $request->get('date', now()->toDateString());
+        $date = $request->input('date', now()->toDateString());
 
         $activities = DB::table('activities')
             ->where('user_id', $user->id)
@@ -3444,7 +3529,7 @@ Route::group(['middleware' => []], function () {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
-        $category = $request->get('category');
+        $category = $request->input('category');
 
         $query = DB::table('learning_content')
             ->where('is_active', true);
@@ -3568,7 +3653,7 @@ Route::group(['middleware' => []], function () {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
-        $period = $request->get('period', 'week'); // week, month, year
+        $period = $request->input('period', 'week'); // week, month, year
         $labels = [];
         $data = [];
         $today = now();
@@ -4470,7 +4555,7 @@ Route::group(['middleware' => []], function () {
             ->where('type', 'hot_lead')
             ->findOrFail($id);
 
-        $date = $request->get('date', now()->toDateString());
+        $date = $request->input('date', now()->toDateString());
         if (! is_string($date) || ! preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
             $date = now()->toDateString();
         }
@@ -4535,7 +4620,7 @@ Route::group(['middleware' => []], function () {
             ->where('type', 'hot_lead')
             ->findOrFail($id);
 
-        $date = $request->get('date', now()->toDateString());
+        $date = $request->input('date', now()->toDateString());
         if (! is_string($date) || ! preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
             $date = now()->toDateString();
         }
@@ -5383,8 +5468,8 @@ Route::group(['middleware' => []], function () {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
-        $category = $request->get('category', 'top_realtor');
-        $period = $request->get('period', 'weekly');
+        $category = $request->input('category', 'top_realtor');
+        $period = $request->input('period', 'weekly');
 
         $service = new \App\Services\LeaderboardService;
         $data = $service->getLeaderboard($category, $period, $user->id);
