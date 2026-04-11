@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
+use App\Http\Controllers\EbookController;
 use Laravel\Sanctum\PersonalAccessToken;
 
 // Helper function to get authenticated user
@@ -28,7 +29,7 @@ function getAuthUser(Request $request)
     }
 
     $token = $request->bearerToken();
-    if (! $token) {
+    if (!$token) {
         return null;
     }
 
@@ -45,7 +46,7 @@ function getAuthUser(Request $request)
 
 function isAdminUser($user): bool
 {
-    if (! $user instanceof User) {
+    if (!$user instanceof User) {
         return false;
     }
 
@@ -166,11 +167,11 @@ Route::get('/app-config', function () {
 
 /** Public legal documents (mobile WebView + website). */
 Route::get('/legal-documents/{slug}', function (string $slug) {
-    if (! in_array($slug, ['privacy', 'terms'], true)) {
+    if (!in_array($slug, ['privacy', 'terms'], true)) {
         return response()->json(['success' => false, 'message' => 'Not found'], 404);
     }
     $doc = LegalDocument::query()->where('slug', $slug)->first();
-    if (! $doc) {
+    if (!$doc) {
         return response()->json(['success' => false, 'message' => 'Not found'], 404);
     }
 
@@ -185,7 +186,7 @@ Route::get('/legal-documents/{slug}', function (string $slug) {
 
 Route::get('/admin/legal-documents', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+    if (!isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
     $rows = LegalDocument::query()
@@ -201,7 +202,7 @@ Route::get('/admin/legal-documents', function (Request $request) {
  */
 Route::get('/admin/settings/app-config', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+    if (!isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -221,7 +222,7 @@ Route::get('/admin/settings/app-config', function (Request $request) {
 
 Route::post('/admin/settings/app-config', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+    if (!isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -268,10 +269,10 @@ Route::post('/admin/settings/app-config', function (Request $request) {
 
 Route::get('/admin/legal-documents/{slug}', function (Request $request, string $slug) {
     $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+    if (!isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
-    if (! in_array($slug, ['privacy', 'terms'], true)) {
+    if (!in_array($slug, ['privacy', 'terms'], true)) {
         return response()->json(['success' => false, 'message' => 'Invalid slug'], 404);
     }
     $doc = LegalDocument::query()->where('slug', $slug)->firstOrFail();
@@ -289,10 +290,10 @@ Route::get('/admin/legal-documents/{slug}', function (Request $request, string $
 
 Route::put('/admin/legal-documents/{slug}', function (Request $request, string $slug) {
     $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+    if (!isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
-    if (! in_array($slug, ['privacy', 'terms'], true)) {
+    if (!in_array($slug, ['privacy', 'terms'], true)) {
         return response()->json(['success' => false, 'message' => 'Invalid slug'], 404);
     }
     $data = $request->validate([
@@ -325,6 +326,15 @@ Route::middleware(['auth:sanctum', 'abilities:admin:manage'])->prefix('admin/not
     Route::put('/{id}', [NotificationSettingController::class, 'update']);
 });
 
+// Admin: E-book Management
+Route::middleware(['auth:sanctum', 'abilities:admin:manage'])->prefix('admin/ebooks')->group(function () {
+    Route::get('/', [EbookController::class, 'index']);
+    Route::post('/', [EbookController::class, 'store']);
+    Route::get('/{id}', [EbookController::class, 'show']);
+    Route::put('/{id}', [EbookController::class, 'update']);
+    Route::delete('/{id}', [EbookController::class, 'destroy']);
+});
+
 // Reven chatbot
 Route::post('/chat', [\App\Http\Controllers\ChatController::class, 'send']);
 Route::get('/chat/history', [\App\Http\Controllers\ChatController::class, 'history']);
@@ -334,7 +344,7 @@ Route::delete('/chat/history/{sessionId}', [\App\Http\Controllers\ChatController
 // Admin: Reven AI inbox (monitor all user chat sessions/messages)
 Route::get('/admin/ai/users', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+    if (!isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -375,7 +385,7 @@ Route::get('/admin/ai/users', function (Request $request) {
 // Admin: AI runtime settings (API key + custom knowledge base text)
 Route::get('/admin/ai/settings', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+    if (!isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -383,7 +393,7 @@ Route::get('/admin/ai/settings', function (Request $request) {
     $knowledgeBase = (string) cache('ai_custom_knowledge_base', '');
     $kbBlocksRaw = (string) cache('ai_kb_blocks', '[]');
     $kbBlocks = json_decode($kbBlocksRaw, true);
-    if (! is_array($kbBlocks)) {
+    if (!is_array($kbBlocks)) {
         $kbBlocks = [];
     }
     $behavior = (string) cache('ai_behavior_instructions', '');
@@ -422,7 +432,7 @@ Route::get('/admin/ai/settings', function (Request $request) {
 
 Route::post('/admin/ai/settings', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+    if (!isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -473,7 +483,8 @@ Route::post('/admin/ai/settings', function (Request $request) {
         // Keep the payload small/safe. Only store expected keys.
         $clean = [];
         foreach ($kbBlocks as $b) {
-            if (! is_array($b)) continue;
+            if (!is_array($b))
+                continue;
             $id = trim((string) ($b['id'] ?? ''));
             $title = trim((string) ($b['title'] ?? ''));
             $content = trim((string) ($b['content'] ?? ''));
@@ -481,7 +492,8 @@ Route::post('/admin/ai/settings', function (Request $request) {
             if ($id === '') {
                 $id = (string) \Illuminate\Support\Str::uuid();
             }
-            if ($title === '' && $content === '') continue;
+            if ($title === '' && $content === '')
+                continue;
             $clean[] = [
                 'id' => mb_substr($id, 0, 60),
                 'title' => mb_substr($title, 0, 120),
@@ -533,7 +545,7 @@ Route::post('/admin/ai/settings', function (Request $request) {
 
 Route::post('/admin/ai/settings/knowledge-base-pdf', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+    if (!isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -545,7 +557,7 @@ Route::post('/admin/ai/settings/knowledge-base-pdf', function (Request $request)
 
     $mode = (string) ($validated['mode'] ?? 'append');
     $file = $request->file('pdf');
-    if (! $file) {
+    if (!$file) {
         return response()->json(['success' => false, 'message' => 'Missing file'], 422);
     }
 
@@ -572,10 +584,10 @@ Route::post('/admin/ai/settings/knowledge-base-pdf', function (Request $request)
     if ($title === '') {
         $title = $filename;
     }
-    $block = "PDF KB Source: {$filename}\n\n".$text;
+    $block = "PDF KB Source: {$filename}\n\n" . $text;
 
     $existing = trim((string) cache('ai_custom_knowledge_base', ''));
-    $next = $mode === 'replace' ? $block : trim($existing."\n\n---\n\n".$block);
+    $next = $mode === 'replace' ? $block : trim($existing . "\n\n---\n\n" . $block);
     if (mb_strlen($next) > 200000) {
         $next = mb_substr($next, 0, 200000);
     }
@@ -585,7 +597,7 @@ Route::post('/admin/ai/settings/knowledge-base-pdf', function (Request $request)
     // Also store as a separate KB block so admin can manage many datasets.
     $kbBlocksRaw = (string) cache('ai_kb_blocks', '[]');
     $kbBlocks = json_decode($kbBlocksRaw, true);
-    if (! is_array($kbBlocks)) {
+    if (!is_array($kbBlocks)) {
         $kbBlocks = [];
     }
     if ($mode === 'replace') {
@@ -611,7 +623,7 @@ Route::post('/admin/ai/settings/knowledge-base-pdf', function (Request $request)
 
 Route::post('/admin/ai/settings/kb-block/{blockId}/pdf', function (Request $request, string $blockId) {
     $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+    if (!isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -621,7 +633,7 @@ Route::post('/admin/ai/settings/kb-block/{blockId}/pdf', function (Request $requ
     ]);
 
     $file = $request->file('pdf');
-    if (! $file) {
+    if (!$file) {
         return response()->json(['success' => false, 'message' => 'Missing file'], 422);
     }
 
@@ -647,18 +659,20 @@ Route::post('/admin/ai/settings/kb-block/{blockId}/pdf', function (Request $requ
     if ($title === '') {
         $title = $filename;
     }
-    $blockContent = "PDF KB Source: {$filename}\n\n".$text;
+    $blockContent = "PDF KB Source: {$filename}\n\n" . $text;
 
     $kbBlocksRaw = (string) cache('ai_kb_blocks', '[]');
     $kbBlocks = json_decode($kbBlocksRaw, true);
-    if (! is_array($kbBlocks)) {
+    if (!is_array($kbBlocks)) {
         $kbBlocks = [];
     }
 
     $found = false;
     foreach ($kbBlocks as &$b) {
-        if (! is_array($b)) continue;
-        if ((string) ($b['id'] ?? '') !== $blockId) continue;
+        if (!is_array($b))
+            continue;
+        if ((string) ($b['id'] ?? '') !== $blockId)
+            continue;
         $b['title'] = mb_substr($title, 0, 120);
         $b['content'] = mb_substr($blockContent, 0, 200000);
         $b['enabled'] = (bool) ($b['enabled'] ?? true);
@@ -667,7 +681,7 @@ Route::post('/admin/ai/settings/kb-block/{blockId}/pdf', function (Request $requ
     }
     unset($b);
 
-    if (! $found) {
+    if (!$found) {
         return response()->json(['success' => false, 'message' => 'Dataset not found'], 404);
     }
 
@@ -684,18 +698,18 @@ Route::post('/admin/ai/settings/kb-block/{blockId}/pdf', function (Request $requ
 
 Route::delete('/admin/ai/settings/kb-block/{blockId}', function (Request $request, string $blockId) {
     $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+    if (!isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
     $kbBlocksRaw = (string) cache('ai_kb_blocks', '[]');
     $kbBlocks = json_decode($kbBlocksRaw, true);
-    if (! is_array($kbBlocks)) {
+    if (!is_array($kbBlocks)) {
         $kbBlocks = [];
     }
 
     $before = count($kbBlocks);
-    $kbBlocks = array_values(array_filter($kbBlocks, fn ($b) => ! (is_array($b) && (string) ($b['id'] ?? '') === $blockId)));
+    $kbBlocks = array_values(array_filter($kbBlocks, fn($b) => !(is_array($b) && (string) ($b['id'] ?? '') === $blockId)));
     $after = count($kbBlocks);
 
     if ($after === $before) {
@@ -715,7 +729,7 @@ Route::delete('/admin/ai/settings/kb-block/{blockId}', function (Request $reques
 
 Route::get('/admin/ai/users/{userId}/sessions', function (Request $request, int $userId) {
     $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+    if (!isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -730,7 +744,7 @@ Route::get('/admin/ai/users/{userId}/sessions', function (Request $request, int 
 
 Route::get('/admin/ai/users/{userId}/usage', function (Request $request, int $userId) {
     $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+    if (!isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -764,7 +778,7 @@ Route::get('/admin/ai/users/{userId}/usage', function (Request $request, int $us
 
 Route::get('/admin/ai/sessions/{sessionId}/messages', function (Request $request, int $sessionId) {
     $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+    if (!isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -782,12 +796,12 @@ Route::post('/admin/ai/users/{userId}/send', [\App\Http\Controllers\ChatControll
 // Admin: enabled AI KB courses for a user (based on user's membership tier)
 Route::get('/admin/ai/users/{userId}/kb', function (Request $request, int $userId) {
     $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+    if (!isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
     $user = \App\Models\User::query()->find($userId);
-    if (! $user) {
+    if (!$user) {
         return response()->json(['success' => false, 'message' => 'User not found'], 404);
     }
 
@@ -810,7 +824,7 @@ Route::get('/admin/ai/users/{userId}/kb', function (Request $request, int $userI
 // Admin: human handoff tickets
 Route::post('/admin/ai/tickets', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+    if (!isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -832,7 +846,7 @@ Route::post('/admin/ai/tickets', function (Request $request) {
 
 Route::get('/admin/ai/tickets', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+    if (!isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -846,7 +860,7 @@ Route::get('/admin/ai/tickets', function (Request $request) {
 
 Route::post('/admin/ai/tickets/{ticketId}/resolve', function (Request $request, int $ticketId) {
     $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+    if (!isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -855,7 +869,7 @@ Route::post('/admin/ai/tickets/{ticketId}/resolve', function (Request $request, 
     ]);
 
     $ticket = \App\Models\AiHumanTicket::query()->find($ticketId);
-    if (! $ticket) {
+    if (!$ticket) {
         return response()->json(['success' => false, 'message' => 'Ticket not found'], 404);
     }
 
@@ -1045,10 +1059,10 @@ Route::get('/admin/users/{id}/revenue-metrics', function ($id) {
 /** Admin: upload Deal Room–format .xlsx for a practitioner’s account (hot_lead upserts). */
 Route::post('/admin/users/{userId}/import-excel', function (Request $request, $userId) {
     $auth = getAuthUser($request);
-    if (! $auth) {
+    if (!$auth) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
-    if (! isAdminUser($auth)) {
+    if (!isAdminUser($auth)) {
         return response()->json(['success' => false, 'message' => 'Admin access required'], 403);
     }
 
@@ -1065,7 +1079,7 @@ Route::post('/admin/users/{userId}/import-excel', function (Request $request, $u
     }
 
     $path = $file->getRealPath();
-    if (! $path || ! is_readable($path)) {
+    if (!$path || !is_readable($path)) {
         return response()->json(['success' => false, 'message' => 'Could not read the uploaded file.'], 422);
     }
 
@@ -1088,7 +1102,7 @@ Route::post('/admin/users/{userId}/import-excel', function (Request $request, $u
         'Added %d client(s), updated %d for %s.',
         $stats['created'],
         $stats['updated'],
-        $target->name ?? ('user #'.$target->id)
+        $target->name ?? ('user #' . $target->id)
     );
     if ($stats['skipped'] > 0) {
         $msg .= sprintf(' Skipped %d row(s) with no name.', $stats['skipped']);
@@ -1260,9 +1274,9 @@ Route::post('/admin/notifications/{id}/send-now', [NotificationBroadcastControll
 
 // Video streaming with range request support (required for HTML5 video playback)
 Route::get('stream/{filename}', function (Request $request, $filename) {
-    $path = storage_path('app/public/course-assets/'.$filename);
+    $path = storage_path('app/public/course-assets/' . $filename);
 
-    if (! file_exists($path)) {
+    if (!file_exists($path)) {
         return response()->json(['error' => 'File not found'], 404);
     }
 
@@ -1297,7 +1311,7 @@ Route::get('stream/{filename}', function (Request $request, $filename) {
         $handle = fopen($path, 'rb');
         fseek($handle, $start);
         $remaining = $length;
-        while (! feof($handle) && $remaining > 0) {
+        while (!feof($handle) && $remaining > 0) {
             $chunk = min(1024 * 256, $remaining); // 256KB chunks
             echo fread($handle, $chunk);
             $remaining -= $chunk;
@@ -1310,7 +1324,7 @@ Route::get('stream/{filename}', function (Request $request, $filename) {
 // User-facing Courses List
 Route::get('/courses', function (Request $request) {
     $user = getAuthUser($request);
-    if (! $user) {
+    if (!$user) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -1372,7 +1386,7 @@ Route::get('/courses', function (Request $request) {
 
                 return $progress && $progress->is_completed;
             });
-            $isSequentiallyLocked = ! $prevModuleCompleted && $prevModuleCourses->isNotEmpty();
+            $isSequentiallyLocked = !$prevModuleCompleted && $prevModuleCourses->isNotEmpty();
         }
 
         // Course is locked if: tier locked OR module locked OR sequentially locked
@@ -1380,7 +1394,7 @@ Route::get('/courses', function (Request $request) {
 
         $progress = $userProgress->get($course->id);
 
-        if (! isset($modules[$moduleNum])) {
+        if (!isset($modules[$moduleNum])) {
             $modules[$moduleNum] = [
                 'module_number' => $moduleNum,
                 'module_name' => "Module $moduleNum",
@@ -1394,7 +1408,7 @@ Route::get('/courses', function (Request $request) {
             'id' => $course->id,
             'title' => $course->title,
             'description' => $course->description,
-            'thumbnail_url' => $course->thumbnail_url ? url('storage/'.str_replace('course-assets/', '', $course->thumbnail_url)) : null,
+            'thumbnail_url' => $course->thumbnail_url ? url('storage/' . str_replace('course-assets/', '', $course->thumbnail_url)) : null,
             'url' => $course->url,
             'min_tier' => $course->min_tier,
             'module_number' => $moduleNum,
@@ -1418,7 +1432,7 @@ Route::get('/courses', function (Request $request) {
 // User-facing Course Details (Curriculum)
 Route::get('/courses/{id}', function (Request $request, $id) {
     $user = getAuthUser($request);
-    if (! $user) {
+    if (!$user) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -1473,7 +1487,7 @@ Route::get('/courses/{id}', function (Request $request, $id) {
 // Update course progress
 Route::post('/courses/{id}/progress', function (Request $request, $id) {
     $user = getAuthUser($request);
-    if (! $user) {
+    if (!$user) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -1501,7 +1515,7 @@ Route::post('/courses/{id}/progress', function (Request $request, $id) {
 // Update material progress
 Route::post('/courses/materials/{id}/progress', function (Request $request, $id) {
     $user = getAuthUser($request);
-    if (! $user) {
+    if (!$user) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -1530,18 +1544,18 @@ Route::post('/courses/materials/{id}/progress', function (Request $request, $id)
 // --- Course exam (available after course completion) ---
 Route::get('/courses/{id}/exam', function (Request $request, $id) {
     $user = getAuthUser($request);
-    if (! $user) {
+    if (!$user) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
     $courseId = (int) $id;
     $progress = DB::table('course_progress')->where('user_id', $user->id)->where('course_id', $courseId)->first();
-    if (! $progress || ! $progress->is_completed) {
+    if (!$progress || !$progress->is_completed) {
         return response()->json(['success' => false, 'message' => 'Complete the course first to take the exam'], 403);
     }
 
     $exam = DB::table('course_exams')->where('course_id', $courseId)->where('is_active', true)->first();
-    if (! $exam) {
+    if (!$exam) {
         return response()->json(['success' => false, 'message' => 'No exam available for this course'], 404);
     }
 
@@ -1581,18 +1595,18 @@ Route::get('/courses/{id}/exam', function (Request $request, $id) {
 
 Route::post('/courses/{id}/exam/submit', function (Request $request, $id) {
     $user = getAuthUser($request);
-    if (! $user) {
+    if (!$user) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
     $courseId = (int) $id;
     $progress = DB::table('course_progress')->where('user_id', $user->id)->where('course_id', $courseId)->first();
-    if (! $progress || ! $progress->is_completed) {
+    if (!$progress || !$progress->is_completed) {
         return response()->json(['success' => false, 'message' => 'Complete the course first'], 403);
     }
 
     $exam = DB::table('course_exams')->where('course_id', $courseId)->where('is_active', true)->first();
-    if (! $exam) {
+    if (!$exam) {
         return response()->json(['success' => false, 'message' => 'No exam available'], 404);
     }
 
@@ -1653,7 +1667,7 @@ Route::post('/courses/{id}/exam/submit', function (Request $request, $id) {
 // --- Admin: monitor user course progress and exam results ---
 Route::get('/admin/course-results', function (Request $request) {
     $user = getAuthUser($request);
-    if (! $user) {
+    if (!$user) {
         return response()->json(['success' => false], 401);
     }
     // Optional: add admin role check here
@@ -1706,12 +1720,12 @@ Route::get('/admin/course-results', function (Request $request) {
 // Admin: get course exam and questions
 Route::get('/admin/courses/{id}/exam', function (Request $request, $id) {
     $user = getAuthUser($request);
-    if (! $user) {
+    if (!$user) {
         return response()->json(['success' => false], 401);
     }
 
     $exam = DB::table('course_exams')->where('course_id', (int) $id)->first();
-    if (! $exam) {
+    if (!$exam) {
         return response()->json(['success' => true, 'data' => null]);
     }
 
@@ -1745,7 +1759,7 @@ Route::get('/admin/courses/{id}/exam', function (Request $request, $id) {
 // Admin: create course exam
 Route::post('/admin/courses/{id}/exam', function (Request $request, $id) {
     $user = getAuthUser($request);
-    if (! $user) {
+    if (!$user) {
         return response()->json(['success' => false], 401);
     }
 
@@ -1770,7 +1784,7 @@ Route::post('/admin/courses/{id}/exam', function (Request $request, $id) {
 
 Route::post('/admin/exams/{examId}/questions', function (Request $request, $examId) {
     $user = getAuthUser($request);
-    if (! $user) {
+    if (!$user) {
         return response()->json(['success' => false], 401);
     }
 
@@ -1802,7 +1816,7 @@ Route::post('/admin/exams/{examId}/questions', function (Request $request, $exam
 
 Route::get('/admin/users/{userId}/course-detail', function (Request $request, $userId) {
     $auth = getAuthUser($request);
-    if (! $auth) {
+    if (!$auth) {
         return response()->json(['success' => false], 401);
     }
 
@@ -1882,7 +1896,7 @@ Route::get('/admin/users/{userId}/course-detail', function (Request $request, $u
 // Admin: Force-complete a course for a user (for testing / support)
 Route::post('/admin/force-complete-course', function (Request $request) {
     $auth = getAuthUser($request);
-    if (! $auth) {
+    if (!$auth) {
         return response()->json(['success' => false], 401);
     }
 
@@ -1892,12 +1906,12 @@ Route::post('/admin/force-complete-course', function (Request $request) {
     ]);
 
     $user = User::where('email', $validated['email'])->first();
-    if (! $user) {
+    if (!$user) {
         return response()->json(['success' => false, 'message' => 'User not found'], 404);
     }
 
     $course = DB::table('courses')->find($validated['course_id']);
-    if (! $course) {
+    if (!$course) {
         return response()->json(['success' => false, 'message' => 'Course not found'], 404);
     }
 
@@ -1915,8 +1929,13 @@ Route::post('/admin/force-complete-course', function (Request $request) {
                 ->update(['is_completed' => true, 'completed_at' => $now, 'updated_at' => $now]);
         } else {
             DB::table('course_material_progress')->insert([
-                'user_id' => $user->id, 'material_id' => $mid, 'progress_seconds' => 0,
-                'is_completed' => true, 'completed_at' => $now, 'created_at' => $now, 'updated_at' => $now,
+                'user_id' => $user->id,
+                'material_id' => $mid,
+                'progress_seconds' => 0,
+                'is_completed' => true,
+                'completed_at' => $now,
+                'created_at' => $now,
+                'updated_at' => $now,
             ]);
         }
     }
@@ -1926,8 +1945,14 @@ Route::post('/admin/force-complete-course', function (Request $request) {
             ->update(['progress_percent' => 100, 'is_completed' => true, 'completed_at' => $now, 'last_accessed_at' => $now, 'updated_at' => $now]);
     } else {
         DB::table('course_progress')->insert([
-            'user_id' => $user->id, 'course_id' => $validated['course_id'], 'progress_percent' => 100,
-            'is_completed' => true, 'completed_at' => $now, 'last_accessed_at' => $now, 'created_at' => $now, 'updated_at' => $now,
+            'user_id' => $user->id,
+            'course_id' => $validated['course_id'],
+            'progress_percent' => 100,
+            'is_completed' => true,
+            'completed_at' => $now,
+            'last_accessed_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
         ]);
     }
 
@@ -1937,7 +1962,7 @@ Route::post('/admin/force-complete-course', function (Request $request) {
 // Add this to the protected group
 Route::get('/user/rewards', function (Request $request) {
     $user = getAuthUser($request);
-    if (! $user) {
+    if (!$user) {
         return response()->json(['success' => false], 401);
     }
 
@@ -1963,7 +1988,7 @@ Route::get('/user/rewards', function (Request $request) {
 // Points history: all completed activities with date, activity name, and points
 Route::get('/user/points-history', function (Request $request) {
     $user = getAuthUser($request);
-    if (! $user) {
+    if (!$user) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -2015,7 +2040,7 @@ Route::get('/packages', function () {
 // User-facing: Get my active subscription
 Route::get('/user/subscription', function (Request $request) {
     $user = getAuthUser($request);
-    if (! $user) {
+    if (!$user) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -2045,7 +2070,7 @@ Route::post('/subscriptions/validate-coupon', function (Request $request) {
         })
         ->first();
 
-    if (! $coupon) {
+    if (!$coupon) {
         return response()->json(['success' => false, 'message' => 'Invalid or expired coupon']);
     }
     if ($coupon->max_uses && $coupon->used_count >= $coupon->max_uses) {
@@ -2058,7 +2083,7 @@ Route::post('/subscriptions/validate-coupon', function (Request $request) {
 Route::post('/subscriptions/purchase', function (Request $request) {
     // Purchase logic with auth
     $user = getAuthUser($request);
-    if (! $user) {
+    if (!$user) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
     $data = $request->validate([
@@ -2133,7 +2158,7 @@ Route::post('/subscriptions/purchase', function (Request $request) {
 // Admin settings for configurable user activity points
 Route::get('/admin/settings/user-activity-points', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+    if (!isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
     // Default 20 if not set
@@ -2144,7 +2169,7 @@ Route::get('/admin/settings/user-activity-points', function (Request $request) {
 
 Route::post('/admin/settings/user-activity-points', function (Request $request) {
     $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+    if (!isAdminUser($admin)) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
     $data = $request->validate(['points' => 'required|integer|min:1|max:100']);
@@ -2249,14 +2274,25 @@ Route::get('/activity-types', function (Request $request) {
             $exact = $logMap[$type->id][$dayNumber] ?? null;
             $fallbackDay1 = $logMap[$type->id][1] ?? null;
             $selectedLog = $exact ?: $fallbackDay1;
+            $options = null;
+            if ($selectedLog && isset($selectedLog->mcq_options)) {
+                $options = is_string($selectedLog->mcq_options) ? json_decode($selectedLog->mcq_options) : $selectedLog->mcq_options;
+            }
 
             $type->today_day_number = $dayNumber;
+            $type->day_title = $selectedLog->day_title ?? "DAY $dayNumber";
+            $type->task_title = $selectedLog->task_title ?? 'TASK DESCRIPTION';
+            $type->script_title = $selectedLog->script_title ?? 'VIDEO/REEL SCRIPT IDEA';
             $type->task_description = $selectedLog->task_description ?? $type->description;
             $type->video_reel_script_idea = $selectedLog->script_idea ?? $type->script_idea;
             $type->daily_feedback = $selectedLog->feedback ?? null;
             $type->daily_audio_url = $selectedLog->audio_url ?? null;
             $type->daily_required_listen_percent = $selectedLog->required_listen_percent ?? 0;
             $type->daily_require_user_response = (bool) ($selectedLog->require_user_response ?? false);
+            $type->is_mcq = (bool) ($selectedLog->is_mcq ?? false);
+            $type->mcq_question = $selectedLog->mcq_question ?? null;
+            $type->mcq_options = $options;
+            $type->mcq_correct_option = $selectedLog->mcq_correct_option ?? null;
             $type->has_daily_log = $selectedLog !== null;
 
             return $type;
@@ -2268,7 +2304,7 @@ Route::get('/activity-types', function (Request $request) {
 
 Route::post('/activity-types', function (Request $request) {
     $user = getAuthUser($request);
-    if (! $user) {
+    if (!$user) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -2421,6 +2457,9 @@ Route::put('/admin/activity-types/{id}/daily-logs/{day}', function (Request $req
     }
 
     $data = $request->validate([
+        'day_title' => 'nullable|string|max:255',
+        'task_title' => 'nullable|string|max:255',
+        'script_title' => 'nullable|string|max:255',
         'task_description' => 'nullable|string',
         'script_idea' => 'nullable|string',
         'feedback' => 'nullable|string',
@@ -2432,6 +2471,10 @@ Route::put('/admin/activity-types/{id}/daily-logs/{day}', function (Request $req
         'evening_reminder_enabled' => 'nullable|boolean',
         'morning_reminder_time' => 'nullable|string',
         'evening_reminder_time' => 'nullable|string',
+        'is_mcq' => 'nullable|boolean',
+        'mcq_question' => 'nullable|string',
+        'mcq_options' => 'nullable|array',
+        'mcq_correct_option' => 'nullable|integer',
     ]);
 
     DB::table('activity_type_daily_logs')->updateOrInsert(
@@ -2440,6 +2483,9 @@ Route::put('/admin/activity-types/{id}/daily-logs/{day}', function (Request $req
             'day_number' => $dayNumber,
         ],
         [
+            'day_title' => $data['day_title'] ?? null,
+            'task_title' => $data['task_title'] ?? null,
+            'script_title' => $data['script_title'] ?? null,
             'task_description' => $data['task_description'] ?? null,
             'script_idea' => $data['script_idea'] ?? null,
             'feedback' => $data['feedback'] ?? null,
@@ -2451,6 +2497,10 @@ Route::put('/admin/activity-types/{id}/daily-logs/{day}', function (Request $req
             'evening_reminder_enabled' => isset($data['evening_reminder_enabled']) ? (bool) $data['evening_reminder_enabled'] : true,
             'morning_reminder_time' => $data['morning_reminder_time'] ?? '09:00',
             'evening_reminder_time' => $data['evening_reminder_time'] ?? '18:00',
+            'is_mcq' => isset($data['is_mcq']) ? (bool) $data['is_mcq'] : false,
+            'mcq_question' => $data['mcq_question'] ?? null,
+            'mcq_options' => isset($data['mcq_options']) ? json_encode($data['mcq_options']) : null,
+            'mcq_correct_option' => isset($data['mcq_correct_option']) ? (int) $data['mcq_correct_option'] : null,
             'updated_at' => now(),
             'created_at' => now(),
         ]
@@ -2490,6 +2540,9 @@ Route::post('/admin/activity-types/{id}/daily-logs/bulk', function (Request $req
     $data = $request->validate([
         'entries' => 'required|array|min:1',
         'entries.*.day_number' => 'required|integer|min:1|max:365',
+        'entries.*.day_title' => 'nullable|string|max:255',
+        'entries.*.task_title' => 'nullable|string|max:255',
+        'entries.*.script_title' => 'nullable|string|max:255',
         'entries.*.task_description' => 'nullable|string',
         'entries.*.script_idea' => 'nullable|string',
         'entries.*.feedback' => 'nullable|string',
@@ -2501,6 +2554,10 @@ Route::post('/admin/activity-types/{id}/daily-logs/bulk', function (Request $req
         'entries.*.evening_reminder_enabled' => 'nullable|boolean',
         'entries.*.morning_reminder_time' => 'nullable|string',
         'entries.*.evening_reminder_time' => 'nullable|string',
+        'entries.*.is_mcq' => 'nullable|boolean',
+        'entries.*.mcq_question' => 'nullable|string',
+        'entries.*.mcq_options' => 'nullable|array',
+        'entries.*.mcq_correct_option' => 'nullable|integer',
     ]);
 
     $now = now();
@@ -2508,6 +2565,9 @@ Route::post('/admin/activity-types/{id}/daily-logs/bulk', function (Request $req
         return [
             'activity_type_id' => $activityType->id,
             'day_number' => (int) $entry['day_number'],
+            'day_title' => $entry['day_title'] ?? null,
+            'task_title' => $entry['task_title'] ?? null,
+            'script_title' => $entry['script_title'] ?? null,
             'task_description' => $entry['task_description'] ?? null,
             'script_idea' => $entry['script_idea'] ?? null,
             'feedback' => $entry['feedback'] ?? null,
@@ -2519,6 +2579,10 @@ Route::post('/admin/activity-types/{id}/daily-logs/bulk', function (Request $req
             'evening_reminder_enabled' => isset($entry['evening_reminder_enabled']) ? (bool) $entry['evening_reminder_enabled'] : true,
             'morning_reminder_time' => $entry['morning_reminder_time'] ?? '09:00',
             'evening_reminder_time' => $entry['evening_reminder_time'] ?? '18:00',
+            'is_mcq' => isset($entry['is_mcq']) ? (bool) $entry['is_mcq'] : false,
+            'mcq_question' => $entry['mcq_question'] ?? null,
+            'mcq_options' => isset($entry['mcq_options']) ? (is_array($entry['mcq_options']) ? json_encode($entry['mcq_options']) : $entry['mcq_options']) : null,
+            'mcq_correct_option' => isset($entry['mcq_correct_option']) ? (int) $entry['mcq_correct_option'] : null,
             'created_at' => $now,
             'updated_at' => $now,
         ];
@@ -2527,7 +2591,7 @@ Route::post('/admin/activity-types/{id}/daily-logs/bulk', function (Request $req
     DB::table('activity_type_daily_logs')->upsert(
         $rows,
         ['activity_type_id', 'day_number'],
-        ['task_description', 'script_idea', 'feedback', 'audio_url', 'required_listen_percent', 'require_user_response', 'notification_enabled', 'morning_reminder_enabled', 'evening_reminder_enabled', 'morning_reminder_time', 'evening_reminder_time', 'updated_at']
+        ['day_title', 'task_title', 'script_title', 'task_description', 'script_idea', 'feedback', 'audio_url', 'required_listen_percent', 'require_user_response', 'notification_enabled', 'morning_reminder_enabled', 'evening_reminder_enabled', 'morning_reminder_time', 'evening_reminder_time', 'is_mcq', 'mcq_question', 'mcq_options', 'mcq_correct_option', 'updated_at']
     );
 
     return response()->json([
@@ -2617,7 +2681,7 @@ Route::post('/login', function (Request $request) {
 
     $user = User::where('email', $data['email'])->first();
 
-    if (! $user || ! Hash::check($data['password'], $user->password)) {
+    if (!$user || !Hash::check($data['password'], $user->password)) {
         return response()->json([
             'status' => 'error',
             'message' => 'Invalid credentials.',
@@ -2664,7 +2728,7 @@ Route::post('/login/google', function (Request $request) {
             'id_token' => $data['id_token'],
         ]);
 
-    if (! $verify->ok()) {
+    if (!$verify->ok()) {
         Log::warning('[GOOGLE LOGIN] tokeninfo verify failed', [
             'status' => $verify->status(),
             'body' => $verify->body(),
@@ -2692,7 +2756,7 @@ Route::post('/login/google', function (Request $request) {
         ], 401);
     }
 
-    if ($googleEmail === '' || ! $emailVerified) {
+    if ($googleEmail === '' || !$emailVerified) {
         Log::warning('[GOOGLE LOGIN] email not verified', [
             'email' => $googleEmail,
             'email_verified' => $emailVerified,
@@ -2712,7 +2776,7 @@ Route::post('/login/google', function (Request $request) {
     }
 
     $user = User::whereRaw('LOWER(email) = ?', [$googleEmail])->first();
-    if (! $user) {
+    if (!$user) {
         $user = User::create([
             'name' => $name,
             'email' => $googleEmail,
@@ -2726,7 +2790,7 @@ Route::post('/login/google', function (Request $request) {
         if (trim((string) $user->name) === '' && $name !== '') {
             $user->name = $name;
         }
-        if (! $user->email_verified_at) {
+        if (!$user->email_verified_at) {
             $user->email_verified_at = now();
         }
         $user->save();
@@ -2757,7 +2821,7 @@ Route::post('/login/google', function (Request $request) {
 
 Route::post('/user/push-token', function (Request $request) {
     $user = getAuthUser($request);
-    if (! $user) {
+    if (!$user) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -2781,7 +2845,7 @@ Route::post('/user/push-token', function (Request $request) {
 
 Route::delete('/user/push-token', function (Request $request) {
     $user = getAuthUser($request);
-    if (! $user) {
+    if (!$user) {
         return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
     }
 
@@ -2818,7 +2882,7 @@ Route::post('/password/forgot', function (Request $request) {
 
     $user = User::where('email', $data['email'])->first();
 
-    if (! $user) {
+    if (!$user) {
         return response()->json([
             'status' => 'error',
             'message' => 'User not found.',
@@ -2846,7 +2910,7 @@ Route::post('/password/reset', function (Request $request) {
 
     $user = User::where('remember_token', $data['token'])->first();
 
-    if (! $user) {
+    if (!$user) {
         return response()->json([
             'status' => 'error',
             'message' => 'Invalid or expired token.',
@@ -2871,7 +2935,7 @@ Route::post('/email/verify', function (Request $request) {
 
     $user = User::where('email', $data['email'])->first();
 
-    if (! $user) {
+    if (!$user) {
         return response()->json([
             'status' => 'error',
             'message' => 'User not found.',
@@ -2894,7 +2958,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/user/profile', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -2912,7 +2976,7 @@ Route::group(['middleware' => []], function () {
                 'years_experience' => $user->years_experience,
                 'current_monthly_income' => $user->current_monthly_income,
                 'target_monthly_income' => $user->target_monthly_income,
-                'profile_photo' => $user->profile_photo_path ? url('storage/'.$user->profile_photo_path) : null,
+                'profile_photo' => $user->profile_photo_path ? url('storage/' . $user->profile_photo_path) : null,
                 'is_profile_complete' => (bool) $user->is_profile_complete,
                 'has_completed_diagnosis' => (bool) $user->has_completed_diagnosis,
                 'diagnosis_blocker' => $user->diagnosis_blocker,
@@ -2936,13 +3000,13 @@ Route::group(['middleware' => []], function () {
 
     Route::put('/user/profile', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
         $data = $request->validate([
             'name' => ['sometimes', 'string', 'max:255'],
-            'email' => ['sometimes', 'email', 'max:255', 'unique:users,email,'.$user->id],
+            'email' => ['sometimes', 'email', 'max:255', 'unique:users,email,' . $user->id],
             'mobile' => ['sometimes', 'nullable', 'string', 'max:20'],
             'city' => ['sometimes', 'nullable', 'string', 'max:100'],
             'brokerage' => ['sometimes', 'nullable', 'string', 'max:255'],
@@ -2963,13 +3027,13 @@ Route::group(['middleware' => []], function () {
 
     Route::put('/user/profile/setup', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'email', 'max:255', 'unique:users,email,'.$user->id],
+            'email' => ['required', 'email', 'max:255', 'unique:users,email,' . $user->id],
             'mobile' => ['required', 'string', 'max:20'],
             'city' => ['required', 'string', 'max:100'],
             'brokerage' => ['required', 'string', 'max:255'],
@@ -2992,7 +3056,7 @@ Route::group(['middleware' => []], function () {
 
     Route::post('/user/request-deletion', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3016,7 +3080,7 @@ Route::group(['middleware' => []], function () {
 
     Route::post('/user/change-password', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3025,7 +3089,7 @@ Route::group(['middleware' => []], function () {
             'new_password' => ['required', 'string', 'min:6'],
         ]);
 
-        if (! Hash::check($data['current_password'], $user->password)) {
+        if (!Hash::check($data['current_password'], $user->password)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Current password is incorrect',
@@ -3044,7 +3108,7 @@ Route::group(['middleware' => []], function () {
 
     Route::post('/user/photo', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3058,7 +3122,7 @@ Route::group(['middleware' => []], function () {
         return response()->json([
             'success' => true,
             'message' => 'Photo uploaded successfully',
-            'photo_url' => asset('storage/'.$path),
+            'photo_url' => asset('storage/' . $path),
         ]);
     });
 
@@ -3066,7 +3130,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/diagnosis/questions', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3090,7 +3154,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/admin/diagnosis/questions', function (Request $request) {
         $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+        if (!isAdminUser($admin)) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3113,7 +3177,7 @@ Route::group(['middleware' => []], function () {
 
     Route::post('/admin/diagnosis/questions', function (Request $request) {
         $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+        if (!isAdminUser($admin)) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3141,7 +3205,7 @@ Route::group(['middleware' => []], function () {
 
     Route::put('/admin/diagnosis/questions/{id}', function (Request $request, $id) {
         $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+        if (!isAdminUser($admin)) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3170,7 +3234,7 @@ Route::group(['middleware' => []], function () {
 
     Route::delete('/admin/diagnosis/questions/{id}', function (Request $request, $id) {
         $admin = getAuthUser($request);
-    if (! isAdminUser($admin)) {
+        if (!isAdminUser($admin)) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3180,7 +3244,7 @@ Route::group(['middleware' => []], function () {
 
     Route::post('/diagnosis/submit', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3212,7 +3276,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/activities', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3232,7 +3296,7 @@ Route::group(['middleware' => []], function () {
 
     Route::post('/activities', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3263,7 +3327,7 @@ Route::group(['middleware' => []], function () {
 
     Route::put('/activities/{id}/complete', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3272,7 +3336,7 @@ Route::group(['middleware' => []], function () {
             ->where('user_id', $user->id)
             ->first();
 
-        if (! $activity) {
+        if (!$activity) {
             return response()->json(['success' => false, 'message' => 'Activity not found'], 404);
         }
 
@@ -3349,7 +3413,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/activities/progress', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3397,7 +3461,7 @@ Route::group(['middleware' => []], function () {
 
     Route::post('/activities/log', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3478,7 +3542,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/dashboard/momentum', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3502,7 +3566,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/learning/categories', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3523,9 +3587,11 @@ Route::group(['middleware' => []], function () {
         ]);
     });
 
+    Route::get('/ebooks', [EbookController::class, 'getPublicEbooks']);
+
     Route::get('/learning/content', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3539,7 +3605,7 @@ Route::group(['middleware' => []], function () {
         }
 
         // If user is not premium, only show free content
-        if (! $user->is_premium) {
+        if (!$user->is_premium) {
             $query->where('tier', 'free');
         }
 
@@ -3565,7 +3631,7 @@ Route::group(['middleware' => []], function () {
 
     Route::post('/learning/progress', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3597,7 +3663,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/dashboard/stats', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3649,7 +3715,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/reports/growth', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3730,7 +3796,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/tasks/today', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3776,7 +3842,7 @@ Route::group(['middleware' => []], function () {
     // 2) "Create the first client" (stored as a hot_lead result)
     Route::get('/clients/status', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3794,7 +3860,7 @@ Route::group(['middleware' => []], function () {
 
     Route::post('/clients', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3808,18 +3874,18 @@ Route::group(['middleware' => []], function () {
         ]);
 
         $decoded = [];
-        if (! empty($data['notes'])) {
+        if (!empty($data['notes'])) {
             $decoded = json_decode($data['notes'], true) ?: [];
         }
-        if (! isset($decoded['lead_stage']) || $decoded['lead_stage'] === '' || $decoded['lead_stage'] === null) {
+        if (!isset($decoded['lead_stage']) || $decoded['lead_stage'] === '' || $decoded['lead_stage'] === null) {
             $decoded['lead_stage'] = 'cold calling';
         } else {
             $decoded['lead_stage'] = CrmPipeline::normalizeLeadStageString($decoded['lead_stage']) ?? $decoded['lead_stage'];
         }
-        if (! isset($decoded['crm_started_at'])) {
+        if (!isset($decoded['crm_started_at'])) {
             $decoded['crm_started_at'] = now()->toIso8601String();
         }
-        if (! isset($decoded['cold_calling']) || ! is_array($decoded['cold_calling'])) {
+        if (!isset($decoded['cold_calling']) || !is_array($decoded['cold_calling'])) {
             $decoded['cold_calling'] = ColdCallingFlow::defaultState();
         }
 
@@ -3845,7 +3911,7 @@ Route::group(['middleware' => []], function () {
     /** Upload Deal Room–format .xlsx; upserts hot_lead clients for the authenticated user. */
     Route::post('/clients/import-excel', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3860,7 +3926,7 @@ Route::group(['middleware' => []], function () {
         }
 
         $path = $file->getRealPath();
-        if (! $path || ! is_readable($path)) {
+        if (!$path || !is_readable($path)) {
             return response()->json(['success' => false, 'message' => 'Could not read the uploaded file.'], 422);
         }
 
@@ -3902,7 +3968,7 @@ Route::group(['middleware' => []], function () {
      */
     Route::post('/clients/{id}/cold-calling/touch', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -3929,8 +3995,10 @@ Route::group(['middleware' => []], function () {
         }
 
         try {
-            if (($data['mode'] === 'call' && $data['result'] === 'no_reply')
-                || ($data['mode'] === 'whatsapp' && $data['result'] === 'no_answer')) {
+            if (
+                ($data['mode'] === 'call' && $data['result'] === 'no_reply')
+                || ($data['mode'] === 'whatsapp' && $data['result'] === 'no_answer')
+            ) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Use no_answer for calls and no_reply for WhatsApp.',
@@ -3950,7 +4018,7 @@ Route::group(['middleware' => []], function () {
             if ($out['advanced_to_follow_up']) {
                 $meta['daily_actions'] = $meta['daily_actions'] ?? [];
                 $meta['daily_actions'][$date] = $meta['daily_actions'][$date] ?? [];
-                if (! is_array($meta['daily_actions'][$date])) {
+                if (!is_array($meta['daily_actions'][$date])) {
                     $meta['daily_actions'][$date] = [];
                 }
                 $meta['daily_actions'][$date]['cold_calling'] = 'yes';
@@ -3970,7 +4038,7 @@ Route::group(['middleware' => []], function () {
                 $exists = $driver === 'mysql'
                     ? $base->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(notes, '$.action_key')) = ?", ['cold_calling'])->exists()
                     : $base->whereRaw("json_extract(notes, '$.action_key') = ?", ['cold_calling'])->exists();
-                if (! $exists) {
+                if (!$exists) {
                     \App\Models\Result::create([
                         'user_id' => $user->id,
                         'type' => 'revenue_action',
@@ -4003,7 +4071,7 @@ Route::group(['middleware' => []], function () {
     /** Leads in cold calling due for contact today (schedule empty or date <= today). */
     Route::get('/clients/cold-calling/today', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -4017,7 +4085,7 @@ Route::group(['middleware' => []], function () {
         foreach ($leads as $lead) {
             try {
                 $decoded = json_decode($lead->notes, true);
-                if (! is_array($decoded)) {
+                if (!is_array($decoded)) {
                     continue;
                 }
                 $meta = CrmPipeline::normalizeNotesMeta($decoded);
@@ -4047,7 +4115,7 @@ Route::group(['middleware' => []], function () {
      */
     Route::post('/clients/{id}/follow-up/touch', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -4087,7 +4155,7 @@ Route::group(['middleware' => []], function () {
             if ($out['advanced_to_client_meeting']) {
                 $meta['daily_actions'] = $meta['daily_actions'] ?? [];
                 $meta['daily_actions'][$date] = $meta['daily_actions'][$date] ?? [];
-                if (! is_array($meta['daily_actions'][$date])) {
+                if (!is_array($meta['daily_actions'][$date])) {
                     $meta['daily_actions'][$date] = [];
                 }
                 $meta['daily_actions'][$date]['follow_up_back'] = 'yes';
@@ -4107,7 +4175,7 @@ Route::group(['middleware' => []], function () {
                 $exists = $driver === 'mysql'
                     ? $base->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(notes, '$.action_key')) = ?", ['follow_up_back'])->exists()
                     : $base->whereRaw("json_extract(notes, '$.action_key') = ?", ['follow_up_back'])->exists();
-                if (! $exists) {
+                if (!$exists) {
                     \App\Models\Result::create([
                         'user_id' => $user->id,
                         'type' => 'revenue_action',
@@ -4140,7 +4208,7 @@ Route::group(['middleware' => []], function () {
     /** Leads in follow-up due for contact today (schedule empty or date <= today; excludes stalled/retargeting). */
     Route::get('/clients/follow-up/today', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -4154,7 +4222,7 @@ Route::group(['middleware' => []], function () {
         foreach ($leads as $lead) {
             try {
                 $decoded = json_decode($lead->notes, true);
-                if (! is_array($decoded)) {
+                if (!is_array($decoded)) {
                     continue;
                 }
                 $meta = CrmPipeline::normalizeNotesMeta($decoded);
@@ -4184,7 +4252,7 @@ Route::group(['middleware' => []], function () {
      */
     Route::post('/clients/{id}/client-meeting/touch', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -4224,7 +4292,7 @@ Route::group(['middleware' => []], function () {
             if ($out['advanced_to_deal_negotiation']) {
                 $meta['daily_actions'] = $meta['daily_actions'] ?? [];
                 $meta['daily_actions'][$date] = $meta['daily_actions'][$date] ?? [];
-                if (! is_array($meta['daily_actions'][$date])) {
+                if (!is_array($meta['daily_actions'][$date])) {
                     $meta['daily_actions'][$date] = [];
                 }
                 $meta['daily_actions'][$date]['client_meeting'] = 'yes';
@@ -4244,7 +4312,7 @@ Route::group(['middleware' => []], function () {
                 $exists = $driver === 'mysql'
                     ? $base->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(notes, '$.action_key')) = ?", ['client_meeting'])->exists()
                     : $base->whereRaw("json_extract(notes, '$.action_key') = ?", ['client_meeting'])->exists();
-                if (! $exists) {
+                if (!$exists) {
                     \App\Models\Result::create([
                         'user_id' => $user->id,
                         'type' => 'revenue_action',
@@ -4276,7 +4344,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/clients/client-meeting/today', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -4290,7 +4358,7 @@ Route::group(['middleware' => []], function () {
         foreach ($leads as $lead) {
             try {
                 $decoded = json_decode($lead->notes, true);
-                if (! is_array($decoded)) {
+                if (!is_array($decoded)) {
                     continue;
                 }
                 $meta = CrmPipeline::normalizeNotesMeta($decoded);
@@ -4320,7 +4388,7 @@ Route::group(['middleware' => []], function () {
      */
     Route::post('/clients/{id}/deal-negotiation/touch', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -4360,7 +4428,7 @@ Route::group(['middleware' => []], function () {
             if ($out['advanced_to_deal_close']) {
                 $meta['daily_actions'] = $meta['daily_actions'] ?? [];
                 $meta['daily_actions'][$date] = $meta['daily_actions'][$date] ?? [];
-                if (! is_array($meta['daily_actions'][$date])) {
+                if (!is_array($meta['daily_actions'][$date])) {
                     $meta['daily_actions'][$date] = [];
                 }
                 $meta['daily_actions'][$date]['deal_negotiation'] = 'yes';
@@ -4380,7 +4448,7 @@ Route::group(['middleware' => []], function () {
                 $exists = $driver === 'mysql'
                     ? $base->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(notes, '$.action_key')) = ?", ['deal_negotiation'])->exists()
                     : $base->whereRaw("json_extract(notes, '$.action_key') = ?", ['deal_negotiation'])->exists();
-                if (! $exists) {
+                if (!$exists) {
                     \App\Models\Result::create([
                         'user_id' => $user->id,
                         'type' => 'revenue_action',
@@ -4412,7 +4480,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/clients/deal-negotiation/today', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -4426,7 +4494,7 @@ Route::group(['middleware' => []], function () {
         foreach ($leads as $lead) {
             try {
                 $decoded = json_decode($lead->notes, true);
-                if (! is_array($decoded)) {
+                if (!is_array($decoded)) {
                     continue;
                 }
                 $meta = CrmPipeline::normalizeNotesMeta($decoded);
@@ -4456,7 +4524,7 @@ Route::group(['middleware' => []], function () {
      */
     Route::post('/clients/{id}/deal-closure/touch', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -4505,7 +4573,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/clients/deal-closure/today', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -4519,7 +4587,7 @@ Route::group(['middleware' => []], function () {
         foreach ($leads as $lead) {
             try {
                 $decoded = json_decode($lead->notes, true);
-                if (! is_array($decoded)) {
+                if (!is_array($decoded)) {
                     continue;
                 }
                 $meta = CrmPipeline::normalizeNotesMeta($decoded);
@@ -4547,7 +4615,7 @@ Route::group(['middleware' => []], function () {
     // Per-client daily execution progress (what % of today's actions are completed)
     Route::get('/clients/{id}/daily-progress', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -4556,7 +4624,7 @@ Route::group(['middleware' => []], function () {
             ->findOrFail($id);
 
         $date = $request->input('date', now()->toDateString());
-        if (! is_string($date) || ! preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+        if (!is_string($date) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
             $date = now()->toDateString();
         }
 
@@ -4612,7 +4680,7 @@ Route::group(['middleware' => []], function () {
     // Per-client revenue actions (Cold Call Block, Follow-up Block, etc.)
     Route::get('/clients/{id}/actions', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -4621,7 +4689,7 @@ Route::group(['middleware' => []], function () {
             ->findOrFail($id);
 
         $date = $request->input('date', now()->toDateString());
-        if (! is_string($date) || ! preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+        if (!is_string($date) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
             $date = now()->toDateString();
         }
 
@@ -4662,7 +4730,7 @@ Route::group(['middleware' => []], function () {
         $actionLabels = CrmPipeline::ACTION_LABELS;
         $driver = DB::connection()->getDriverName();
         foreach ($storedActions as $actionKey => $status) {
-            if ($status !== 'yes' || ! is_string($actionKey)) {
+            if ($status !== 'yes' || !is_string($actionKey)) {
                 continue;
             }
             $normalizedKey = CrmPipeline::normalizeActionKey($actionKey);
@@ -4680,7 +4748,7 @@ Route::group(['middleware' => []], function () {
                     $q->whereRaw("json_extract(notes, '$.action_key') = ?", [$actionKey])
                         ->orWhereRaw("json_extract(notes, '$.action_key') = ?", [$normalizedKey]);
                 })->exists();
-            if (! $exists) {
+            if (!$exists) {
                 try {
                     \App\Models\Result::create([
                         'user_id' => $user->id,
@@ -4711,7 +4779,7 @@ Route::group(['middleware' => []], function () {
 
     Route::post('/clients/{id}/actions', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -4742,11 +4810,11 @@ Route::group(['middleware' => []], function () {
         }
 
         $meta['daily_actions'] = $meta['daily_actions'] ?? [];
-        if (! is_array($meta['daily_actions'])) {
+        if (!is_array($meta['daily_actions'])) {
             $meta['daily_actions'] = [];
         }
         $meta['daily_actions'][$date] = $meta['daily_actions'][$date] ?? [];
-        if (! is_array($meta['daily_actions'][$date])) {
+        if (!is_array($meta['daily_actions'][$date])) {
             $meta['daily_actions'][$date] = [];
         }
         $previousStatus = $meta['daily_actions'][$date][$data['action_key']] ?? null;
@@ -4759,7 +4827,7 @@ Route::group(['middleware' => []], function () {
         $client->notes = json_encode($meta);
         $client->save();
 
-        Log::info('[DAILY_LOG_DEBUG] POST /clients/'.$id.'/actions', [
+        Log::info('[DAILY_LOG_DEBUG] POST /clients/' . $id . '/actions', [
             'action_key' => $data['action_key'],
             'status' => $data['status'],
             'date' => $date,
@@ -4793,7 +4861,7 @@ Route::group(['middleware' => []], function () {
                         ->orWhereRaw("json_extract(notes, '$.action_key') = ?", ['site_visit']);
                 })->exists();
 
-            if (! $exists) {
+            if (!$exists) {
                 try {
                     $result = \App\Models\Result::create([
                         'user_id' => $user->id,
@@ -4837,7 +4905,7 @@ Route::group(['middleware' => []], function () {
     // ─── Save detailed action log for a client (cold call, site visit, negotiation, referral, deal closed) ───
     Route::post('/clients/{id}/action-log', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -4901,14 +4969,14 @@ Route::group(['middleware' => []], function () {
 
         return response()->json([
             'success' => true,
-            'message' => ucfirst(str_replace('_', ' ', $type)).' logged successfully',
+            'message' => ucfirst(str_replace('_', ' ', $type)) . ' logged successfully',
         ]);
     });
 
     // ─── Get activities for a client (for client-specific activity list) ───
     Route::get('/clients/{id}/activities', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -4943,7 +5011,7 @@ Route::group(['middleware' => []], function () {
     // ─── Get action logs for a client on a specific date ───
     Route::get('/clients/{id}/action-logs', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -4979,7 +5047,7 @@ Route::group(['middleware' => []], function () {
     // Log a result (hot lead, deal closed, commission)
     Route::post('/results', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -5035,7 +5103,7 @@ Route::group(['middleware' => []], function () {
     // Get results (filterable by type, date range)
     Route::get('/results', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -5146,7 +5214,7 @@ Route::group(['middleware' => []], function () {
     // ─── Revenue Tracker key metrics (Week / Month / Quarter) ───
     Route::get('/revenue/metrics', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -5267,7 +5335,7 @@ Route::group(['middleware' => []], function () {
         foreach ($recentCandidates as $row) {
             $nameKey = strtolower(trim((string) ($row->client_name ?? '')));
             if ($nameKey === '') {
-                $nameKey = 'id:'.$row->id;
+                $nameKey = 'id:' . $row->id;
             }
             if (isset($seenNames[$nameKey])) {
                 continue;
@@ -5307,7 +5375,7 @@ Route::group(['middleware' => []], function () {
     // Monthly results graph data
     Route::get('/results/monthly-graph', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -5350,7 +5418,7 @@ Route::group(['middleware' => []], function () {
 
     Route::post('/follow-ups', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -5382,7 +5450,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/follow-ups', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -5422,7 +5490,7 @@ Route::group(['middleware' => []], function () {
 
     Route::put('/follow-ups/{id}/complete', function (Request $request, $id) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -5464,7 +5532,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/leaderboard', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -5511,7 +5579,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/badges', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -5534,7 +5602,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/badges/recent', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -5556,7 +5624,7 @@ Route::group(['middleware' => []], function () {
 
     Route::get('/weekly-review', function (Request $request) {
         $user = getAuthUser($request);
-        if (! $user) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
         }
 
@@ -5616,7 +5684,7 @@ Route::group(['middleware' => []], function () {
 });
 
 // Disaster Recovery & System Backups (Admin Only)
-Route::group(['prefix' => 'admin/system'], function() {
+Route::group(['prefix' => 'admin/system'], function () {
     Route::middleware(['auth:sanctum', 'abilities:admin:manage'])->group(function () {
         Route::get('/backups', [\App\Http\Controllers\BackupController::class, 'index']);
         Route::get('/backups/download/{filename}', [\App\Http\Controllers\BackupController::class, 'download']);
