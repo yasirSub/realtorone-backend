@@ -8,7 +8,6 @@ services:
             - '8000:8000'
         volumes:
             - ./php.ini:/usr/local/etc/php/php.ini:ro
-            - .:/var/www/html
             - ${COURSE_ASSETS_PATH:-./storage/app/public/course-assets}:/var/www/html/storage/app/public/course-assets
         environment:
             APP_ENV: ${APP_ENV:-production}
