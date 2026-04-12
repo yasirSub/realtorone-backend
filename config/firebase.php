@@ -19,4 +19,8 @@ return [
 
     'credentials_json' => env('FIREBASE_CREDENTIALS_JSON'),
 
+    'private_key' => env('FIREBASE_PRIVATE_KEY'),
+
+    'client_email' => env('FIREBASE_CLIENT_EMAIL'),
+
 ];

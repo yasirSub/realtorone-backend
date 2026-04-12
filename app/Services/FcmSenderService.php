@@ -39,10 +39,25 @@ class FcmSenderService
         $source = 'none';
         if (is_string($path) && $path !== '' && is_readable($path)) {
             $source = 'path';
-            $keyFile = json_decode((string) file_get_contents($path), true);
+            $content = (string) file_get_contents($path);
+            if (str_starts_with($content, "\xEF\xBB\xBF")) {
+                $content = substr($content, 3);
+            }
+            $keyFile = json_decode($content, true);
         } elseif (is_string($jsonString) && $jsonString !== '') {
-            $source = 'json';
-            $keyFile = json_decode($jsonString, true);
+            $content = $jsonString;
+            if (str_starts_with($content, "\xEF\xBB\xBF")) {
+                $content = substr($content, 3);
+            }
+            $keyFile = json_decode($content, true);
+        } elseif (config('firebase.private_key')) {
+            $source = 'env';
+            $keyFile = [
+                'type' => 'service_account',
+                'project_id' => config('firebase.project_id'),
+                'private_key' => config('firebase.private_key'),
+                'client_email' => config('firebase.client_email'),
+            ];
         } else {
             return null;
         }
@@ -74,7 +89,16 @@ class FcmSenderService
         $credentials = new ServiceAccountCredentials(self::SCOPE, $keyFile);
         $handler = HttpHandlerFactory::build();
 
-        return $credentials->fetchAuthToken($handler);
+        try {
+            return $credentials->fetchAuthToken($handler);
+        } catch (\Exception $e) {
+            Log::error('FCM OAuth fetchAuthToken exception', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+            return null;
+        }
     }
 
     /**

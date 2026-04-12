@@ -30,6 +30,8 @@ services:
             FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-realtor-one}
             FIREBASE_CREDENTIALS_PATH: ${FIREBASE_CREDENTIALS_PATH:-/var/www/html/realtor-one-firebase-adminsdk-fbsvc-4bdaeea92a.json}
             FIREBASE_CREDENTIALS_JSON: ${FIREBASE_CREDENTIALS_JSON:-}
+            FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY:-}
+            FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL:-}
         depends_on:
             - mysql
         networks:

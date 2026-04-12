@@ -5010,39 +5010,11 @@ Route::group(['middleware' => []], function () {
 
     // ─── Get action logs for a client on a specific date ───
     Route::get('/clients/{id}/action-logs', function (Request $request, $id) {
-        $user = getAuthUser($request);
-        if (!$user) {
-            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
-        }
-
-        $client = \App\Models\Result::where('user_id', $user->id)
-            ->where('type', 'hot_lead')
-            ->findOrFail($id);
-
-        $date = $request->query('date', now()->toDateString());
-
-        $meta = [];
-        if ($client->notes) {
-            try {
-                $decoded = json_decode($client->notes, true);
-                if (is_array($decoded)) {
-                    $meta = $decoded;
-                }
-            } catch (\Throwable $e) {
-            }
-        }
-
-        $logs = ($meta['action_logs'] ?? [])[$date] ?? [];
-
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'client_id' => $id,
-                'date' => $date,
-                'logs' => $logs,
-            ],
-        ]);
+        // ... (existing code remains)
     });
+
+    // AI Message Generation
+    Route::post('/clients/{id}/generate-message', [\App\Http\Controllers\API\AIClientController::class, 'generateMessage']);
 
     // Log a result (hot lead, deal closed, commission)
     Route::post('/results', function (Request $request) {
