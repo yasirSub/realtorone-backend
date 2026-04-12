@@ -9,7 +9,7 @@ services:
         volumes:
             - ./php.ini:/usr/local/etc/php/php.ini:ro
             - .:/var/www/html
-#            - /root/realtorone/backend/storage/app/public/course-assets:/var/www/html/storage/app/public/course-assets
+            - ${COURSE_ASSETS_PATH:-./storage/app/public/course-assets}:/var/www/html/storage/app/public/course-assets
         environment:
             APP_ENV: ${APP_ENV:-production}
             APP_KEY: ${APP_KEY:-base64:k7rgmQg7V8UNLfXOQd0CimcjJQWCW5ODov2KzdLSgoA=}
@@ -51,7 +51,7 @@ services:
         volumes:
             - 'mysql-data:/var/lib/mysql'
         healthcheck:
-            test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-ppassword", "--silent"]
+            test: [ "CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-ppassword", "--silent" ]
             interval: 5s
             timeout: 5s
             retries: 30

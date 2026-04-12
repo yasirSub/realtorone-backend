@@ -40,4 +40,4 @@ ENV LOG_CHANNEL=stderr
 
 RUN chmod +x /var/www/html/docker-entrypoint.sh
 
-CMD ["/var/www/html/docker-entrypoint.sh"]
+CMD ["sh", "/var/www/html/docker-entrypoint.sh"]

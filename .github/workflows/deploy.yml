@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -15,7 +16,6 @@ jobs:
           host: 187.77.184.129
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
-          # password: ${{ secrets.VPS_PASSWORD }} # Use SSH Key for better security
           command_timeout: 30m
           script: |
             set -e
@@ -42,6 +42,13 @@ jobs:
             # Smart update: only rebuild if files changed
             # --remove-orphans ensures old containers are cleaned up without deleting everything
             docker compose up -d --build --remove-orphans
+
+            # Fail fast with actionable logs if app container cannot start
+            if ! docker ps --format '{{.Names}}' | grep -q '^backend-app-1$'; then
+              echo "backend-app-1 is not running after compose up. Recent logs:"
+              docker compose logs --tail=80 app || true
+              exit 1
+            fi
             
             # Use a robust wait loop that survives container restarts
             echo "Waiting for services to reach running and healthy state..."
@@ -74,5 +81,6 @@ jobs:
 
             # Ensure the services are actually running
             docker compose ps
+            docker ps --filter name=backend-app-1 --filter name=backend-mysql-1
             echo "--- Disk After Cleanup ---"
             df -h
