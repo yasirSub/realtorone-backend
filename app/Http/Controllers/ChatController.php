@@ -50,6 +50,7 @@ You are Reven, a friendly AI assistant for the RealtorOne real estate training a
 - **Courses & training**: Enrolled courses, course progress, the Cold Calling Master program, Million Dirham Beliefs Program, and learning content
 - **Daily tasks**: Tasks on the Dashboard, activity logging, momentum scores
 - **Leaderboard & badges**: How to improve rank, earned badges, streaks
+- **Webinars & Events**: Upcoming live sessions, special guest masterclasses, and how to join via Zoom links
 - **Account**: Profile updates, avatar, settings
 - **Real estate tips**: Cold calling, prospecting, follow-ups, client meetings
 
@@ -141,6 +142,14 @@ PROMPT;
         }
         if (preg_match('/\b(cold call|cold calling|prospect|follow.?up)\b/i', $text)) {
             return ['reply' => 'Cold calling tips: great opener + active listening + clear objective. Check the Cold Calling Master course in your Courses tab!', 'courses' => null, 'commands' => null];
+        }
+        if (preg_match('/\b(webinar|webinars|live session|zoom link|when is the next|meeting)\b/i', $text)) {
+            $webinars = \App\Models\Webinar::where('is_active', true)->where('scheduled_at', '>', now())->limit(5)->get();
+            if ($webinars->isEmpty()) {
+                return ['reply' => 'There are no upcoming webinars scheduled at the moment. Check back later!', 'courses' => null, 'commands' => null];
+            }
+            $reply = "Here are the upcoming webinars:\n" . $webinars->map(fn($w) => "- **{$w->title}**: " . optional($w->scheduled_at)->toDayDateTimeString())->implode("\n");
+            return ['reply' => $reply, 'courses' => null, 'commands' => null];
         }
         return ['reply' => "I\'m here to help, {$displayName}! Type **help** to see what I can do, or try: courses, tasks, badges, profile.", 'courses' => null, 'commands' => null];
     }
@@ -311,6 +320,28 @@ PROMPT;
 
         // Lightweight structured “tool” data for common CRM questions
         $structuredContext = [];
+
+        // 0) Webinars Context
+        if (preg_match('/\b(webinar|webinars|live session|event|zoom|schedule|when|time)\b/i', $message)) {
+            $upcomingWebinars = \App\Models\Webinar::where('is_active', true)
+                ->where('scheduled_at', '>', now()->subHours(2)) // Keep currently running ones too
+                ->orderBy('scheduled_at')
+                ->limit(10)
+                ->get(['title', 'description', 'zoom_link', 'scheduled_at', 'target_tier', 'is_promotional']);
+
+            if ($upcomingWebinars->isNotEmpty()) {
+                $structuredContext['upcoming_webinars'] = $upcomingWebinars->map(function ($w) {
+                    return [
+                        'title' => $w->title,
+                        'description' => $w->description,
+                        'zoom_link' => $w->zoom_link,
+                        'scheduled_at' => optional($w->scheduled_at)->toDateTimeString(),
+                        'tier' => $w->target_tier ?: 'All',
+                        'is_promotional' => (bool)$w->is_promotional
+                    ];
+                })->values()->all();
+            }
+        }
 
         // 1) Active clients list (hot_lead results with a current/open status)
         if (preg_match('/\b(active client|active clients|current client|current deal|hot lead|pipeline)\b/i', $message)) {

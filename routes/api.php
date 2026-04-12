@@ -335,6 +335,15 @@ Route::middleware(['auth:sanctum', 'abilities:admin:manage'])->prefix('admin/ebo
     Route::delete('/{id}', [EbookController::class, 'destroy']);
 });
 
+// Admin: Webinar Management
+Route::prefix('admin/webinars')->group(function () {
+    Route::get('/', [\App\Http\Controllers\API\WebinarController::class, 'adminIndex']);
+    Route::post('/', [\App\Http\Controllers\API\WebinarController::class, 'store']);
+    Route::put('/{id}', [\App\Http\Controllers\API\WebinarController::class, 'update']);
+    Route::delete('/{id}', [\App\Http\Controllers\API\WebinarController::class, 'destroy']);
+    Route::post('/{id}/notify', [\App\Http\Controllers\API\WebinarController::class, 'notify']);
+});
+
 // Reven chatbot
 Route::post('/chat', [\App\Http\Controllers\ChatController::class, 'send']);
 Route::get('/chat/history', [\App\Http\Controllers\ChatController::class, 'history']);
@@ -2036,6 +2045,9 @@ Route::get('/packages', function () {
         'data' => \App\Models\SubscriptionPackage::where('is_active', true)->orderBy('tier_level', 'asc')->get(),
     ]);
 });
+
+// User-facing: Webinars
+Route::get('/webinars', [\App\Http\Controllers\API\WebinarController::class, 'index']);
 
 // User-facing: Get my active subscription
 Route::get('/user/subscription', function (Request $request) {
