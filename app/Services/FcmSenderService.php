@@ -154,7 +154,7 @@ class FcmSenderService
             \App\Models\UserPushToken::where('token', $token)->delete();
         }
 
-        Log::warning('FCM send failed', [
+        Log::error('FCM send failed', [
             'status' => $response->status(),
             'body' => $response->body(),
         ]);

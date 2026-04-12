@@ -57,6 +57,7 @@ class SendPushBroadcastJob implements ShouldQueue
         $tokens = UserPushToken::query()
             ->whereIn('user_id', $userIds)
             ->get(['token', 'user_id']);
+        $tokenCount = $tokens->count();
 
         $data = array_merge(
             [
@@ -91,9 +92,21 @@ class SendPushBroadcastJob implements ShouldQueue
         $broadcast->last_sent_count = $sent;
         if (! $fcm->isConfigured()) {
             $broadcast->last_error = 'FCM not configured (set FIREBASE_PROJECT_ID and service account credentials).';
+        } elseif ($tokenCount === 0) {
+            $broadcast->last_error = 'No push tokens found for recipients.';
+        } elseif ($sent === 0) {
+            $broadcast->last_error = "Push send failed: 0/{$tokenCount} tokens delivered.";
+            Log::error('SendPushBroadcastJob: zero tokens delivered.', [
+                'broadcast_id' => $broadcast->id,
+                'recipient_count' => count($userIds),
+                'token_count' => $tokenCount,
+            ]);
         }
 
-        if ($broadcast->recurrence_type !== 'none') {
+        if ($sent === 0 && $tokenCount > 0) {
+            $broadcast->status = 'failed';
+            $broadcast->next_run_at = null;
+        } elseif ($broadcast->recurrence_type !== 'none') {
             $broadcast->status = 'scheduled';
             $broadcast->next_run_at = $scheduleService->nextRunAfter($broadcast, $now);
         } else {
