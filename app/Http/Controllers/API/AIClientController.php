@@ -44,7 +44,7 @@ class AIClientController extends Controller
         if (!$apiKey) {
             return response()->json([
                 'success' => false, 
-                'message' => 'AI service is currently unavailable (missing API key).'
+                'message' => 'Coming Soon!'
             ], 503);
         }
 
