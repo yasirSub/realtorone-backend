@@ -8,8 +8,8 @@ services:
             - '8000:8000'
         volumes:
             - ./php.ini:/usr/local/etc/php/php.ini:ro
-            - ${COURSE_ASSETS_PATH:-./storage/app/public/course-assets}:/var/www/html/storage/app/public/course-assets
-            - ${PROFILE_PHOTOS_PATH:-./storage/app/public/profile-photos}:/var/www/html/storage/app/public/profile-photos
+            - ${STORAGE_PUBLIC_PATH:-./storage/app/public}:/var/www/html/storage/app/public
+            - ${STORAGE_PRIVATE_PATH:-./storage/app/private}:/var/www/html/storage/app/private
         environment:
             APP_ENV: ${APP_ENV:-production}
             APP_KEY: ${APP_KEY:-base64:k7rgmQg7V8UNLfXOQd0CimcjJQWCW5ODov2KzdLSgoA=}
