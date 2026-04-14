@@ -20,6 +20,7 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use App\Http\Controllers\EbookController;
 use Laravel\Sanctum\PersonalAccessToken;
+use Illuminate\Support\Facades\Mail;
 
 // Helper function to get authenticated user
 function getAuthUser(Request $request)
@@ -2795,7 +2796,7 @@ Route::post('/login/google', function (Request $request) {
             'password' => Hash::make(Str::random(40)),
             'status' => 'active',
         ]);
-        $user->email_verified_at = now();
+        // $user->email_verified_at = now(); // Removed auto-verification for Google signup
         $user->save();
         Log::info('[GOOGLE LOGIN] user created', ['user_id' => $user->id, 'email' => $user->email]);
     } else {
@@ -2902,16 +2903,29 @@ Route::post('/password/forgot', function (Request $request) {
     }
 
     // Generate reset token
-    $resetToken = bin2hex(random_bytes(32));
+    $resetToken = strtoupper(Str::random(6)); // 6-character OTP-style code for easy app entry
     $user->update(['remember_token' => $resetToken]);
 
-    // In production, send email with reset link
-    // For now, return token for testing
-    return response()->json([
-        'status' => 'ok',
-        'message' => 'Password reset token generated',
-        'reset_token' => $resetToken,
-    ]);
+    // Send email
+    try {
+        $resetUrl = "https://realtorone.com/reset-password?token=" . $resetToken; // Generic URL
+        Mail::send('emails.password_reset', ['token' => $resetToken, 'resetUrl' => $resetUrl], function ($message) use ($user) {
+            $message->to($user->email);
+            $message->subject('Reset Your Password - Realtor One');
+        });
+        
+        return response()->json([
+            'status' => 'ok',
+            'message' => 'Password reset token sent to your email',
+            'reset_token' => $resetToken, // Returning for testing purposes as well
+        ]);
+    } catch (\Exception $e) {
+        Log::error('Failed to send reset email: ' . $e->getMessage());
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Failed to send reset email. Please try again later.',
+        ], 500);
+    }
 });
 
 Route::post('/password/reset', function (Request $request) {
@@ -2920,7 +2934,7 @@ Route::post('/password/reset', function (Request $request) {
         'password' => ['required', 'string', 'min:6'],
     ]);
 
-    $user = User::where('remember_token', $data['token'])->first();
+    $user = User::where('remember_token', strtoupper($data['token']))->first();
 
     if (!$user) {
         return response()->json([
@@ -2937,6 +2951,26 @@ Route::post('/password/reset', function (Request $request) {
     return response()->json([
         'status' => 'ok',
         'message' => 'Password reset successfully',
+    ]);
+});
+
+Route::post('/password/verify-token', function (Request $request) {
+    $data = $request->validate([
+        'token' => ['required', 'string'],
+    ]);
+
+    $user = User::where('remember_token', strtoupper($data['token']))->first();
+
+    if (!$user) {
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Invalid or expired token.',
+        ], 400);
+    }
+
+    return response()->json([
+        'status' => 'ok',
+        'message' => 'Token is valid',
     ]);
 });
 
