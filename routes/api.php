@@ -3335,12 +3335,19 @@ Route::group(['middleware' => []], function () {
             'rank' => 'Starter',
         ]);
 
+        $recommendedPathMap = [
+            'leadGeneration' => 'Pipeline Builder',
+            'confidence' => 'Belief Rewiring',
+            'closing' => 'Objection Handler',
+            'discipline' => 'Daily Momentum',
+        ];
+
         return response()->json([
             'success' => true,
             'message' => 'Diagnosis submitted successfully',
             'data' => [
                 'primary_blocker' => $data['primary_blocker'],
-                'recommended_path' => $this->getRecommendedPath($data['primary_blocker']),
+                'recommended_path' => $recommendedPathMap[$data['primary_blocker']] ?? 'Daily Momentum',
             ],
         ]);
     });
