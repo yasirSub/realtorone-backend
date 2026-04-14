@@ -11,6 +11,7 @@ use App\Support\FollowUpFlow;
 use App\Models\LegalDocument;
 use App\Models\User;
 use App\Models\UserPushToken;
+use Ichtrojan\Otp\Otp;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -2902,9 +2903,9 @@ Route::post('/password/forgot', function (Request $request) {
         ], 404);
     }
 
-    // Generate reset token
-    $resetToken = strtoupper(Str::random(6)); // 6-character OTP-style code for easy app entry
-    $user->update(['remember_token' => $resetToken]);
+    // Generate reset token using ichtrojan/laravel-otp
+    $otp = (new Otp)->generate($user->email, 'numeric', 6, 15);
+    $resetToken = $otp->token;
 
     // Send email
     try {
@@ -2930,41 +2931,52 @@ Route::post('/password/forgot', function (Request $request) {
 
 Route::post('/password/reset', function (Request $request) {
     $data = $request->validate([
+        'email' => ['required', 'email'],
         'token' => ['required', 'string'],
         'password' => ['required', 'string', 'min:6'],
     ]);
 
-    $user = User::where('remember_token', strtoupper($data['token']))->first();
+    // Validate OTP using ichtrojan/laravel-otp
+    $otp = (new Otp)->validate($data['email'], $data['token']);
+    
+    if (!$otp->status) {
+        return response()->json([
+            'status' => 'error',
+            'message' => $otp->message, // "OTP does not exist" or "OTP expired"
+        ], 400);
+    }
+
+    $user = User::where('email', $data['email'])->first();
 
     if (!$user) {
         return response()->json([
             'status' => 'error',
-            'message' => 'Invalid or expired token.',
-        ], 400);
+            'message' => 'User not found.',
+        ], 404);
     }
 
     $user->update([
         'password' => Hash::make($data['password']),
-        'remember_token' => null,
     ]);
 
     return response()->json([
         'status' => 'ok',
-        'message' => 'Password reset successfully',
+        'message' => 'Password has been successfully reset.',
     ]);
 });
 
 Route::post('/password/verify-token', function (Request $request) {
     $data = $request->validate([
+        'email' => ['required', 'email'],
         'token' => ['required', 'string'],
     ]);
 
-    $user = User::where('remember_token', strtoupper($data['token']))->first();
-
-    if (!$user) {
+    $otp = (new Otp)->validate($data['email'], $data['token']);
+    
+    if (!$otp->status) {
         return response()->json([
             'status' => 'error',
-            'message' => 'Invalid or expired token.',
+            'message' => $otp->message,
         ], 400);
     }
 
