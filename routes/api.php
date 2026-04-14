@@ -12,7 +12,9 @@ use App\Models\LegalDocument;
 use App\Models\User;
 use App\Models\UserPushToken;
 use Ichtrojan\Otp\Otp;
+use Ichtrojan\Otp\Models\Otp as OtpModel;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
@@ -2909,7 +2911,7 @@ Route::post('/password/forgot', function (Request $request) {
 
     // Send email
     try {
-        $resetUrl = "https://realtorone.com/reset-password?token=" . $resetToken; // Generic URL
+        $resetUrl = "https://realtorone.com/reset-password?token=" . urlencode($resetToken) . "&email=" . urlencode($user->email);
         Mail::send('emails.password_reset', ['token' => $resetToken, 'resetUrl' => $resetUrl], function ($message) use ($user) {
             $message->to($user->email);
             $message->subject('Reset Your Password - Realtor One');
@@ -2971,12 +2973,25 @@ Route::post('/password/verify-token', function (Request $request) {
         'token' => ['required', 'string'],
     ]);
 
-    $otp = (new Otp)->validate($data['email'], $data['token']);
-    
-    if (!$otp->status) {
+    // Non-consuming OTP check for step-2 verification screen.
+    // Token must remain valid for the final /password/reset call.
+    $otp = OtpModel::where('identifier', $data['email'])
+        ->where('token', $data['token'])
+        ->where('valid', true)
+        ->first();
+
+    if (!$otp) {
         return response()->json([
             'status' => 'error',
-            'message' => $otp->message,
+            'message' => 'OTP does not exist',
+        ], 400);
+    }
+
+    $expiresAt = $otp->created_at->copy()->addMinutes((int) $otp->validity);
+    if (Carbon::now()->greaterThan($expiresAt)) {
+        return response()->json([
+            'status' => 'error',
+            'message' => 'OTP Expired',
         ], 400);
     }
 
