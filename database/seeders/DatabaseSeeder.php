@@ -369,7 +369,8 @@ class DatabaseSeeder extends Seeder
         // Seed Badges
         (new \App\Services\BadgeService())->seedDefaultBadges();
 
-        // Seed Results data for users with history
+        // Seed Results data for users with history (DISABLED)
+        /*
         $allUsers = User::all();
         foreach ($allUsers as $user) {
             // Skip if already has results
@@ -417,6 +418,7 @@ class DatabaseSeeder extends Seeder
                 ]);
             }
         }
+        */
 
         // Seed Weekly Scores
         foreach ($allUsers as $user) {
