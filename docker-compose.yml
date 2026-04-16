@@ -8,8 +8,8 @@ services:
             - '8000:8000'
         volumes:
             - ./php.ini:/usr/local/etc/php/php.ini:ro
-            - ${STORAGE_PUBLIC_PATH:-./storage/app/public}:/var/www/html/storage/app/public
-            - ${STORAGE_PRIVATE_PATH:-./storage/app/private}:/var/www/html/storage/app/private
+            - ./storage/app/public:/var/www/html/storage/app/public
+            - ./storage/app/private:/var/www/html/storage/app/private
         environment:
             APP_ENV: ${APP_ENV:-production}
             APP_KEY: ${APP_KEY:-base64:k7rgmQg7V8UNLfXOQd0CimcjJQWCW5ODov2KzdLSgoA=}
