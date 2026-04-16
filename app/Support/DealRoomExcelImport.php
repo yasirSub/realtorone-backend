@@ -90,7 +90,7 @@ class DealRoomExcelImport
             }
 
             $contact = $data['Contact number'] ?? $data['Contact'] ?? $data['Phone'] ?? '';
-            $email = $data['Email'] ?? '';
+            $email = trim((string) ($data['Email'] ?? $data['email'] ?? ''));
             $source = $data['Lead Source'] ?? $data['Source'] ?? 'Excel';
             $rawStage = strtolower(trim((string) ($data['Lead Stage'] ?? $data['Stage'] ?? 'cold calling')));
             $stage = match (true) {
@@ -103,10 +103,27 @@ class DealRoomExcelImport
             };
             $type = $data['Lead Type'] ?? $data['Type'] ?? 'Buyer';
 
-            $lead = Result::where('user_id', $userId)
-                ->where('type', 'hot_lead')
-                ->where('client_name', $name)
-                ->first();
+            // Check if lead already exists for this user by email OR Name
+            // If email is provided, we prioritize checking by email
+            $leadQuery = Result::where('user_id', $userId)
+                ->where('type', 'hot_lead');
+
+            if ($email !== '') {
+                $lead = (clone $leadQuery)
+                    ->where('notes', 'LIKE', '%"email":"' . $email . '"%')
+                    ->first();
+            } else {
+                $lead = (clone $leadQuery)
+                    ->where('client_name', $name)
+                    ->first();
+            }
+
+            // User requested: "if same mail id there dont add that" and "dont add them in the list"
+            // We will skip rows that already exist instead of updating them to avoid duplicates
+            if ($lead) {
+                $skipped++;
+                continue;
+            }
 
             $baseNotes = [
                 'lead_stage' => $stage,
@@ -116,35 +133,24 @@ class DealRoomExcelImport
                 'synced_at' => now()->toDateTimeString(),
             ];
 
-            if ($lead) {
-                $old = json_decode($lead->notes, true) ?: [];
-                $baseNotes['crm_started_at'] = $old['crm_started_at'] ?? now()->toIso8601String();
-                $lead->update([
-                    'property_name' => $contact,
-                    'source' => $source,
-                    'notes' => json_encode($baseNotes),
-                ]);
-                $updatedCount++;
-            } else {
-                $baseNotes['crm_started_at'] = now()->toIso8601String();
-                Result::create([
-                    'user_id' => $userId,
-                    'date' => $syncDate,
-                    'type' => 'hot_lead',
-                    'client_name' => $name,
-                    'property_name' => $contact,
-                    'source' => $source,
-                    'value' => 0,
-                    'status' => 'active',
-                    'notes' => json_encode($baseNotes),
-                ]);
-                $createdCount++;
-            }
+            $baseNotes['crm_started_at'] = now()->toIso8601String();
+            Result::create([
+                'user_id' => $userId,
+                'date' => $syncDate,
+                'type' => 'hot_lead',
+                'client_name' => $name,
+                'property_name' => $contact,
+                'source' => $source,
+                'value' => 0,
+                'status' => 'active',
+                'notes' => json_encode($baseNotes),
+            ]);
+            $createdCount++;
         }
 
         return [
             'created' => $createdCount,
-            'updated' => $updatedCount,
+            'updated' => 0, // We are skipping instead of updating now as per request
             'skipped' => $skipped,
         ];
     }
