@@ -2693,6 +2693,7 @@ Route::post('/register', function (Request $request) {
         'name' => $data['name'],
         'email' => $data['email'],
         'password' => Hash::make($data['password']),
+        'registration_source' => 'email',
     ]);
 
     return response()->json([
@@ -2814,6 +2815,7 @@ Route::post('/login/google', function (Request $request) {
             'email' => $googleEmail,
             'password' => Hash::make(Str::random(40)),
             'status' => 'active',
+            'registration_source' => 'google',
         ]);
         // $user->email_verified_at = now(); // Removed auto-verification for Google signup
         $user->save();
