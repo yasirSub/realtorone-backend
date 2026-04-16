@@ -58,6 +58,7 @@ class User extends Authenticatable
         'membership_tier',
         'phone_number',
         'license_number',
+        'registration_source',
     ];
 
     /**
