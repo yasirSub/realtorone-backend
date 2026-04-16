@@ -421,7 +421,8 @@ class DatabaseSeeder extends Seeder
         */
 
         // Seed Weekly Scores
-        foreach ($allUsers as $user) {
+        $allUsersForScores = User::all();
+        foreach ($allUsersForScores as $user) {
             if (\App\Models\WeeklyScore::where('user_id', $user->id)->exists()) continue;
 
             for ($w = 4; $w >= 0; $w--) {
