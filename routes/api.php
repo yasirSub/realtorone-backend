@@ -3017,6 +3017,78 @@ Route::post('/password/verify-token', function (Request $request) {
     ]);
 });
 
+Route::post('/email/send-otp', function (Request $request) {
+    $data = $request->validate([
+        'email' => ['required', 'email'],
+    ]);
+
+    $user = \App\Models\User::where('email', $data['email'])->first();
+
+    if (!$user) {
+        return response()->json([
+            'status' => 'error',
+            'message' => 'User not found.',
+        ], 404);
+    }
+
+    // Generate OTP using ichtrojan/laravel-otp (same as password forgot)
+    $otp = (new Otp)->generate($user->email, 'numeric', 6, 15);
+    $token = $otp->token;
+
+    // Send email
+    try {
+        Mail::send('emails.email_verification', ['token' => $token, 'user' => $user], function ($message) use ($user) {
+            $message->to($user->email);
+            $message->subject('Verify Your Email - Realtor One');
+        });
+        
+        return response()->json([
+            'status' => 'ok',
+            'message' => 'Verification code sent to your email',
+            'token' => $token, // For testing
+        ]);
+    } catch (\Exception $e) {
+        Log::error('Failed to send verification email: ' . $e->getMessage());
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Failed to send verification email. Please try again later.',
+        ], 500);
+    }
+});
+
+Route::post('/email/verify-otp', function (Request $request) {
+    $data = $request->validate([
+        'email' => ['required', 'email'],
+        'token' => ['required', 'string'],
+    ]);
+
+    // Validate OTP using ichtrojan/laravel-otp
+    $otp = (new Otp)->validate($data['email'], $data['token']);
+    
+    if (!$otp->status) {
+        return response()->json([
+            'status' => 'error',
+            'message' => $otp->message,
+        ], 400);
+    }
+
+    $user = \App\Models\User::where('email', $data['email'])->first();
+
+    if (!$user) {
+        return response()->json([
+            'status' => 'error',
+            'message' => 'User not found.',
+        ], 404);
+    }
+
+    $user->update(['email_verified_at' => now()]);
+
+    return response()->json([
+        'status' => 'ok',
+        'message' => 'Email verified successfully',
+    ]);
+});
+
 Route::post('/email/verify', function (Request $request) {
     $data = $request->validate([
         'email' => ['required', 'email'],
