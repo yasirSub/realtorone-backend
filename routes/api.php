@@ -1009,6 +1009,22 @@ Route::put('/admin/users/{id}', function (Illuminate\Http\Request $request, $id)
     return response()->json(['success' => true, 'data' => $user]);
 });
 
+Route::post('/admin/users/{id}/change-password', function (Illuminate\Http\Request $request, $id) {
+    if (!isAdminUser(getAuthUser($request))) {
+        return response()->json(['error' => 'Unauthorized'], 403);
+    }
+    
+    $user = \App\Models\User::findOrFail($id);
+    $data = $request->validate([
+        'password' => 'required|string|min:8',
+    ]);
+    
+    $user->password = Hash::make($data['password']);
+    $user->save();
+    
+    return response()->json(['success' => true, 'message' => 'Password updated successfully']);
+});
+
 Route::delete('/admin/users/{id}', function ($id) {
     $user = \App\Models\User::findOrFail($id);
     $user->delete();
