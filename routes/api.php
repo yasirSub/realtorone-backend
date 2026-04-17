@@ -1318,6 +1318,10 @@ Route::get('stream/{filename}', function (Request $request, $filename) {
     }
 
     $mimeType = mime_content_type($path);
+    if (str_ends_with(strtolower($filename), '.mp4')) {
+        $mimeType = 'video/mp4';
+    }
+    
     $fileSize = filesize($path);
     $start = 0;
     $end = $fileSize - 1;
@@ -1327,7 +1331,7 @@ Route::get('stream/{filename}', function (Request $request, $filename) {
         'Content-Type' => $mimeType,
         'Accept-Ranges' => 'bytes',
         'Access-Control-Allow-Origin' => '*',
-        'Cache-Control' => 'public, max-age=86400',
+        'Cache-Control' => 'no-cache, private', // Safer for authenticated content
         'Content-Disposition' => 'inline',
     ];
 
@@ -1347,11 +1351,13 @@ Route::get('stream/{filename}', function (Request $request, $filename) {
     $headers['Content-Length'] = $length;
 
     Log::info('[STREAM] Serving file', [
-        'user' => $user->id,
+        'user_id' => $user->id,
         'filename' => $filename,
         'size' => $fileSize,
-        'range' => $request->header('Range'),
-        'mime' => $mimeType
+        'request_range' => $request->header('Range'),
+        'served_range' => "{$start}-{$end}",
+        'mime' => $mimeType,
+        'status' => $statusCode
     ]);
 
     return response()->stream(function () use ($path, $start, $length) {
