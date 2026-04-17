@@ -112,7 +112,13 @@ class CourseColdCallingSeeder extends Seeder
             ]
         ];
 
-        // Delete existing modules to avoid duplicates
+        // Check if modules already exist to preserve manual updates
+        if (\DB::table('course_modules')->where('course_id', $course->id)->count() > 0) {
+            // Modules exist, skip seeding to avoid overwriting updates
+            return;
+        }
+
+        // Delete existing modules to avoid duplicates (only for fresh seed)
         \DB::table('course_modules')->where('course_id', $course->id)->delete();
 
         foreach ($modules as $moduleSequence => $moduleData) {
