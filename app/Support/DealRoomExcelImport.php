@@ -104,23 +104,7 @@ class DealRoomExcelImport
             $type = $data['Lead Type'] ?? $data['Type'] ?? 'Buyer';
 
             // Check if lead already exists for this user by email OR Name
-            // If email is provided, we prioritize checking by email
-            $leadQuery = Result::where('user_id', $userId)
-                ->where('type', 'hot_lead');
-
-            if ($email !== '') {
-                $lead = (clone $leadQuery)
-                    ->where('notes', 'LIKE', '%"email":"' . $email . '"%')
-                    ->first();
-            } else {
-                $lead = (clone $leadQuery)
-                    ->where('client_name', $name)
-                    ->first();
-            }
-
-            // User requested: "if same mail id there dont add that" and "dont add them in the list"
-            // We will skip rows that already exist instead of updating them to avoid duplicates
-            if ($lead) {
+            if (self::exists($userId, $email, $name)) {
                 $skipped++;
                 continue;
             }
@@ -153,6 +137,30 @@ class DealRoomExcelImport
             'updated' => 0, // We are skipping instead of updating now as per request
             'skipped' => $skipped,
         ];
+    }
+
+    /**
+     * Check if a client exists for a user by email or name.
+     */
+    public static function exists(int $userId, string $email = '', string $name = ''): bool
+    {
+        $query = Result::where('user_id', $userId)
+            ->where('type', 'hot_lead');
+
+        if ($email !== '') {
+            $exists = (clone $query)
+                ->where('notes', 'LIKE', '%"email":"' . $email . '"%')
+                ->exists();
+            if ($exists) return true;
+        }
+
+        if ($name !== '') {
+            return (clone $query)
+                ->where('client_name', $name)
+                ->exists();
+        }
+
+        return false;
     }
 
     /**

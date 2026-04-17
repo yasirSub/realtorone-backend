@@ -1302,10 +1302,18 @@ Route::post('/admin/notifications/{id}/cancel', [NotificationBroadcastController
 Route::post('/admin/notifications/{id}/send-now', [NotificationBroadcastController::class, 'sendNow']);
 
 // Video streaming with range request support (required for HTML5 video playback)
+// Protected by auth:sanctum to ensure only authenticated users can stream course content.
 Route::get('stream/{filename}', function (Request $request, $filename) {
+    $user = getAuthUser($request);
+    if (!$user) {
+        Log::warning('[STREAM] Unauthorized access attempt', ['filename' => $filename]);
+        return response()->json(['error' => 'Unauthorized'], 401);
+    }
+
     $path = storage_path('app/public/course-assets/' . $filename);
 
     if (!file_exists($path)) {
+        Log::error('[STREAM] File not found', ['path' => $path]);
         return response()->json(['error' => 'File not found'], 404);
     }
 
@@ -1325,30 +1333,52 @@ Route::get('stream/{filename}', function (Request $request, $filename) {
 
     if ($request->hasHeader('Range')) {
         $range = $request->header('Range');
-        preg_match('/bytes=(\d*)-(\d*)/', $range, $matches);
-        $start = $matches[1] !== '' ? (int) $matches[1] : 0;
-        $end = $matches[2] !== '' ? (int) $matches[2] : $fileSize - 1;
-        $end = min($end, $fileSize - 1);
-        $headers['Content-Range'] = "bytes {$start}-{$end}/{$fileSize}";
-        $statusCode = 206;
+        if (preg_match('/bytes=(\d*)-(\d*)/', $range, $matches)) {
+            $start = isset($matches[1]) && $matches[1] !== '' ? (int) $matches[1] : 0;
+            $end = isset($matches[2]) && $matches[2] !== '' ? (int) $matches[2] : $fileSize - 1;
+            $end = min($end, $fileSize - 1);
+            
+            $headers['Content-Range'] = "bytes {$start}-{$end}/{$fileSize}";
+            $statusCode = 206;
+        }
     }
 
     $length = $end - $start + 1;
     $headers['Content-Length'] = $length;
 
+    Log::info('[STREAM] Serving file', [
+        'user' => $user->id,
+        'filename' => $filename,
+        'size' => $fileSize,
+        'range' => $request->header('Range'),
+        'mime' => $mimeType
+    ]);
+
     return response()->stream(function () use ($path, $start, $length) {
         $handle = fopen($path, 'rb');
+        if (!$handle) return;
+        
         fseek($handle, $start);
         $remaining = $length;
-        while (!feof($handle) && $remaining > 0) {
-            $chunk = min(1024 * 256, $remaining); // 256KB chunks
-            echo fread($handle, $chunk);
-            $remaining -= $chunk;
-            flush();
+        
+        // Increase memory limit for streaming if needed
+        @ini_set('memory_limit', '512M');
+        
+        try {
+            while (!feof($handle) && $remaining > 0) {
+                // Check if connection is still alive
+                if (connection_aborted()) break;
+                
+                $chunk = min(1024 * 128, $remaining); // 128KB chunks for better speed/memory balance
+                echo fread($handle, $chunk);
+                $remaining -= $chunk;
+                flush();
+            }
+        } finally {
+            fclose($handle);
         }
-        fclose($handle);
     }, $statusCode, $headers);
-});
+})->middleware('auth:sanctum');
 
 // User-facing Courses List
 Route::get('/courses', function (Request $request) {
@@ -4059,6 +4089,15 @@ Route::group(['middleware' => []], function () {
             $decoded['cold_calling'] = ColdCallingFlow::defaultState();
         }
 
+        // Duplicate check for manual addition
+        $email = $decoded['email'] ?? '';
+        if (\App\Support\DealRoomExcelImport::exists($user->id, $email, $data['client_name'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Client with this name or email already exists in your Deal Room.',
+            ], 422);
+        }
+
         $result = \App\Models\Result::create([
             'user_id' => $user->id,
             'date' => now()->toDateString(),
@@ -4076,6 +4115,85 @@ Route::group(['middleware' => []], function () {
             'message' => 'Client created',
             'data' => $result,
         ], 201);
+    });
+
+    Route::patch('/clients/{id}', function (Request $request, $id) {
+        $user = getAuthUser($request);
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $client = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->where('id', $id)
+            ->first();
+
+        if (!$client) {
+            return response()->json(['success' => false, 'message' => 'Client not found'], 404);
+        }
+
+        $data = $request->validate([
+            'client_name' => ['sometimes', 'string', 'max:255'],
+            'property_name' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'source' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'value' => ['sometimes', 'numeric', 'min:0'],
+            'notes' => ['sometimes', 'nullable', 'string'],
+            'status' => ['sometimes', 'string', 'in:active,converted,lost'],
+        ]);
+
+        if (isset($data['client_name'])) {
+            $client->client_name = $data['client_name'];
+        }
+        if (array_key_exists('property_name', $data)) {
+            $client->property_name = $data['property_name'];
+        }
+        if (array_key_exists('source', $data)) {
+            $client->source = $data['source'];
+        }
+        if (isset($data['value'])) {
+            $client->value = $data['value'];
+        }
+        if (isset($data['status'])) {
+            $client->status = $data['status'];
+        }
+        if (array_key_exists('notes', $data)) {
+            // Merge existing notes with new notes if needed, or just overwrite if it's a full notes blob from frontend
+            // Usually the frontend sends the full notes JSON
+            $client->notes = $data['notes'];
+        }
+
+        $client->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Client updated',
+            'data' => $client,
+        ]);
+    });
+
+    Route::delete('/clients/{id}', function (Request $request, $id) {
+        $user = getAuthUser($request);
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $client = \App\Models\Result::where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->where('id', $id)
+            ->first();
+
+        if (!$client) {
+            return response()->json(['success' => false, 'message' => 'Client not found'], 404);
+        }
+
+        // Also delete related revenue actions if necessary? 
+        // For now, just delete the client record.
+        $client->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Client deleted',
+        ]);
     });
 
     /** Upload Deal Room–format .xlsx; upserts hot_lead clients for the authenticated user. */
