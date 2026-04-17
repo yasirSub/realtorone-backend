@@ -5965,3 +5965,12 @@ Route::group(['prefix' => 'admin/system'], function () {
         Route::post('/restore', [\App\Http\Controllers\BackupController::class, 'import']);
     });
 });
+
+if (!function_exists('getAuthUser')) {
+    function getAuthUser($request) {
+        $token = $request->bearerToken();
+        if (!$token) return null;
+        $accessToken = \Laravel\Sanctum\PersonalAccessToken::findToken($token);
+        return $accessToken ? $accessToken->tokenable : null;
+    }
+}
