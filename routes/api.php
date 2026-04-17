@@ -1304,6 +1304,11 @@ Route::post('/admin/notifications/{id}/send-now', [NotificationBroadcastControll
 // Video streaming with range request support (required for HTML5 video playback)
 // Protected by auth:sanctum to ensure only authenticated users can stream course content.
 Route::get('stream/{filename}', function (Request $request, $filename) {
+    Log::info('[STREAM_DEBUG] Request received', [
+        'filename' => $filename,
+        'headers' => $request->headers->all(),
+        'ip' => $request->ip()
+    ]);
     $user = getAuthUser($request);
     if (!$user) {
         Log::warning('[STREAM] Unauthorized access attempt', ['filename' => $filename]);
