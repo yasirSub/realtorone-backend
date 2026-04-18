@@ -1315,7 +1315,13 @@ Route::get('stream/{filename}', function (Request $request, $filename) {
         return response()->json(['error' => 'Unauthorized'], 401);
     }
 
-    $path = storage_path('app/public/course-assets/' . $filename);
+    $safeFilename = basename(rawurldecode((string) $filename));
+    if ($safeFilename === '' || $safeFilename === '.' || $safeFilename === '..') {
+        Log::warning('[STREAM] Invalid filename requested', ['filename' => $filename]);
+        return response()->json(['error' => 'Invalid filename'], 400);
+    }
+
+    $path = storage_path('app/public/course-assets/' . $safeFilename);
 
     if (!file_exists($path)) {
         Log::error('[STREAM] File not found', ['path' => $path]);
@@ -1323,7 +1329,7 @@ Route::get('stream/{filename}', function (Request $request, $filename) {
     }
 
     $mimeType = mime_content_type($path);
-    if (str_ends_with(strtolower($filename), '.mp4')) {
+    if (str_ends_with(strtolower($safeFilename), '.mp4')) {
         $mimeType = 'video/mp4';
     }
     
@@ -1357,7 +1363,7 @@ Route::get('stream/{filename}', function (Request $request, $filename) {
 
     Log::info('[STREAM] Serving file', [
         'user_id' => $user->id,
-        'filename' => $filename,
+        'filename' => $safeFilename,
         'size' => $fileSize,
         'request_range' => $request->header('Range'),
         'served_range' => "{$start}-{$end}",
