@@ -14,9 +14,11 @@ jobs:
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: 187.77.184.129
+          port: 22
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
-          command_timeout: 30m
+          timeout: 120s
+          command_timeout: 45m
           script: |
             set -e
             echo "--- Disk Before Cleanup ---"
