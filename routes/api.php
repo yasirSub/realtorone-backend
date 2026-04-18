@@ -32,7 +32,7 @@ function getAuthUser(Request $request)
         return $request->user();
     }
 
-    $token = $request->bearerToken();
+    $token = $request->bearerToken() ?? $request->query('token') ?? $request->input('token');
     if (!$token) {
         return null;
     }
@@ -1389,7 +1389,7 @@ Route::get('stream/{filename}', function (Request $request, $filename) {
             fclose($handle);
         }
     }, $statusCode, $headers);
-})->middleware('auth:sanctum');
+});
 
 // User-facing Courses List
 Route::get('/courses', function (Request $request) {
