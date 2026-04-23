@@ -3,6 +3,8 @@ vendor
 .env
 node_modules
 public/storage
+storage/app/*
+storage/debug/*
 storage/*.key
 storage/framework/cache/data/*
 storage/framework/sessions/*
@@ -11,5 +13,5 @@ storage/logs/*
 bootstrap/cache/*
 
 # Do not ship local DB dumps into Docker images.
-realtorone.sql
+*.sql
 database/database.sqlite
