@@ -2915,16 +2915,31 @@ Route::post('/auth/apple/callback', function (Request $request) {
     ]);
 
     try {
-        // Simple JWT decode for Apple identity token
+        // Simple JWT decode for Apple identity token (base64url safe)
         $tks = explode('.', $data['identity_token']);
         if (count($tks) !== 3) {
-            return response()->json(['status' => 'error', 'message' => 'Invalid Apple token.'], 401);
+            Log::warning('[APPLE LOGIN] Invalid token structure', ['token_parts' => count($tks)]);
+            return response()->json(['status' => 'error', 'message' => 'Invalid Apple token structure.'], 401);
         }
-        $payload = json_decode(base64_decode($tks[1]), true);
         
+        $payloadRaw = str_replace(['-', '_'], ['+', '/'], $tks[1]);
+        $payload = json_decode(base64_decode($payloadRaw), true);
+        
+        if (!$payload) {
+            Log::warning('[APPLE LOGIN] Failed to decode payload', ['raw' => $tks[1]]);
+            return response()->json(['status' => 'error', 'message' => 'Invalid Apple token payload.'], 401);
+        }
+
         $appleEmail = strtolower(trim((string) ($payload['email'] ?? $data['email'] ?? '')));
         
+        Log::info('[APPLE LOGIN] Payload decoded', [
+            'email' => $appleEmail,
+            'sub' => $payload['sub'] ?? 'missing',
+            'aud' => $payload['aud'] ?? 'missing'
+        ]);
+
         if ($appleEmail === '') {
+            Log::warning('[APPLE LOGIN] Email missing in token and request');
             return response()->json(['status' => 'error', 'message' => 'Apple email not provided.'], 401);
         }
 
