@@ -262,6 +262,100 @@ PROMPT;
         return is_array($decoded) && isset($decoded['text']) ? (string) $decoded['text'] : $content;
     }
 
+    private function getOrCreateSession(User $user, string $message, ?int $sessionId): ChatSession
+    {
+        if ($sessionId) {
+            $session = ChatSession::where('id', $sessionId)->where('user_id', $user->id)->first();
+            if ($session) {
+                return $session;
+            }
+        }
+        return ChatSession::create([
+            'user_id' => $user->id,
+            'title' => Str::limit($message, 50),
+        ]);
+    }
+
+    private function getWebinarContext(string $message): array
+    {
+        if (!preg_match('/\b(webinar|webinars|live session|event|zoom|schedule|when|time)\b/i', $message)) {
+            return [];
+        }
+
+        $webinars = \App\Models\Webinar::where('is_active', true)
+            ->where('scheduled_at', '>', now()->subHours(2))
+            ->orderBy('scheduled_at')
+            ->limit(10)
+            ->get(['title', 'description', 'zoom_link', 'scheduled_at', 'target_tier', 'is_promotional']);
+
+        return $webinars->isNotEmpty() ? ['upcoming_webinars' => $webinars->map(fn($w) => [
+            'title' => $w->title,
+            'description' => $w->description,
+            'zoom_link' => $w->zoom_link,
+            'scheduled_at' => optional($w->scheduled_at)->toDateTimeString(),
+            'tier' => $w->target_tier ?: 'All',
+            'is_promotional' => (bool)$w->is_promotional
+        ])->values()->all()] : [];
+    }
+
+    private function getLeadContext(User $user, string $message): array
+    {
+        if (!preg_match('/\b(active client|active clients|current client|current deal|hot lead|pipeline)\b/i', $message)) {
+            return [];
+        }
+
+        $activeClients = \App\Models\Result::query()
+            ->where('user_id', $user->id)
+            ->where('type', 'hot_lead')
+            ->whereNotNull('client_name')
+            ->orderByDesc('date')
+            ->limit(50)
+            ->get(['client_name', 'source', 'status', 'date', 'value']);
+
+        return $activeClients->isNotEmpty() ? ['active_clients' => $activeClients->map(fn($r) => [
+            'client_name' => $r->client_name,
+            'source' => $r->source,
+            'status' => $r->status,
+            'date' => optional($r->date)->toDateString(),
+            'value' => $r->value,
+        ])->values()->all()] : [];
+    }
+
+    private function getSalesContext(User $user, string $message): array
+    {
+        if (!preg_match('/\b(deal[s]? closed|closed deal|commission|revenue)\b/i', $message)) {
+            return [];
+        }
+
+        $deals = \App\Models\Result::query()
+            ->where('user_id', $user->id)
+            ->where('type', 'deal_closed')
+            ->where('date', '>=', now()->startOfMonth())
+            ->orderByDesc('date')
+            ->limit(50)
+            ->get(['client_name', 'value', 'date', 'source']);
+
+        return $deals->isNotEmpty() ? ['deals_closed_this_month' => [
+            'count' => $deals->count(),
+            'total_value' => (float) $deals->sum('value'),
+            'items' => $deals->map(fn($r) => [
+                'client_name' => $r->client_name,
+                'value' => $r->value,
+                'source' => $r->source,
+                'date' => optional($r->date)->toDateString(),
+            ])->values()->all(),
+        ]] : [];
+    }
+
+    private function getCrmContext(User $user, string $message): array
+    {
+        return array_merge(
+            $this->getWebinarContext($message),
+            $this->getLeadContext($user, $message),
+            $this->getSalesContext($user, $message)
+        );
+    }
+
     public function send(Request $request): JsonResponse
     {
         $user = getAuthUser($request);
@@ -278,17 +372,7 @@ PROMPT;
         $sessionId = $validated['session_id'] ?? null;
 
         // Get or create session
-        if ($sessionId) {
-            $session = ChatSession::where('id', $sessionId)->where('user_id', $user->id)->first();
-            if (!$session) {
-                return response()->json(['success' => false, 'message' => 'Session not found'], 404);
-            }
-        } else {
-            $session = ChatSession::create([
-                'user_id' => $user->id,
-                'title' => Str::limit($message, 50),
-            ]);
-        }
+        $session = $this->getOrCreateSession($user, $message, $sessionId);
 
         // Save user message
         ChatMessage::create([
@@ -298,14 +382,11 @@ PROMPT;
             'content' => $message,
         ]);
 
-        // Build messages for OpenAI (system + recent history + new user message)
-        $history = $session->messages()
-            ->whereIn('role', ['user', 'assistant'])
-            ->orderBy('id')
-            ->get();
-
+        // Build messages for OpenAI
+        $history = $session->messages()->whereIn('role', ['user', 'assistant'])->orderBy('id')->get();
         $systemContent = $this->getSystemPrompt($user, $this->getRuntimeKnowledgeBase());
         $coursesForResponse = null;
+
         if ($this->getUseCourseKb() && preg_match('/\b(course|courses|training|learning|enrolled|what are the courses|list courses|show courses)\b/i', $message)) {
             $coursesForResponse = $this->fetchAiCourseListForUser($user)->toArray();
             if (!empty($coursesForResponse)) {
@@ -314,86 +395,11 @@ PROMPT;
             }
         }
 
-        $openaiMessages = [
-            ['role' => 'system', 'content' => $systemContent],
-        ];
+        $openaiMessages = [['role' => 'system', 'content' => $systemContent]];
 
-        // Lightweight structured “tool” data for common CRM questions
-        $structuredContext = [];
-
-        // 0) Webinars Context
-        if (preg_match('/\b(webinar|webinars|live session|event|zoom|schedule|when|time)\b/i', $message)) {
-            $upcomingWebinars = \App\Models\Webinar::where('is_active', true)
-                ->where('scheduled_at', '>', now()->subHours(2)) // Keep currently running ones too
-                ->orderBy('scheduled_at')
-                ->limit(10)
-                ->get(['title', 'description', 'zoom_link', 'scheduled_at', 'target_tier', 'is_promotional']);
-
-            if ($upcomingWebinars->isNotEmpty()) {
-                $structuredContext['upcoming_webinars'] = $upcomingWebinars->map(function ($w) {
-                    return [
-                        'title' => $w->title,
-                        'description' => $w->description,
-                        'zoom_link' => $w->zoom_link,
-                        'scheduled_at' => optional($w->scheduled_at)->toDateTimeString(),
-                        'tier' => $w->target_tier ?: 'All',
-                        'is_promotional' => (bool)$w->is_promotional
-                    ];
-                })->values()->all();
-            }
-        }
-
-        // 1) Active clients list (hot_lead results with a current/open status)
-        if (preg_match('/\b(active client|active clients|current client|current deal|hot lead|pipeline)\b/i', $message)) {
-            $activeClients = \App\Models\Result::query()
-                ->where('user_id', $user->id)
-                ->where('type', 'hot_lead')
-                ->whereNotNull('client_name')
-                ->orderByDesc('date')
-                ->limit(50)
-                ->get(['client_name', 'source', 'status', 'date', 'value']);
-
-            if ($activeClients->isNotEmpty()) {
-                $structuredContext['active_clients'] = $activeClients->map(function ($r) {
-                    return [
-                        'client_name' => $r->client_name,
-                        'source' => $r->source,
-                        'status' => $r->status,
-                        'date' => optional($r->date)->toDateString(),
-                        'value' => $r->value,
-                    ];
-                })->values()->all();
-            }
-        }
-
-        // 2) Deals closed (this month) summary
-        if (preg_match('/\b(deal[s]? closed|closed deal|commission|revenue)\b/i', $message)) {
-            $monthStart = now()->startOfMonth();
-            $deals = \App\Models\Result::query()
-                ->where('user_id', $user->id)
-                ->where('type', 'deal_closed')
-                ->where('date', '>=', $monthStart)
-                ->orderByDesc('date')
-                ->limit(50)
-                ->get(['client_name', 'value', 'date', 'source']);
-
-            if ($deals->isNotEmpty()) {
-                $structuredContext['deals_closed_this_month'] = [
-                    'count' => $deals->count(),
-                    'total_value' => (float) $deals->sum('value'),
-                    'items' => $deals->map(function ($r) {
-                        return [
-                            'client_name' => $r->client_name,
-                            'value' => $r->value,
-                            'source' => $r->source,
-                            'date' => optional($r->date)->toDateString(),
-                        ];
-                    })->values()->all(),
-                ];
-            }
-        }
-
-        if (! empty($structuredContext)) {
+        // Structured CRM Context
+        $structuredContext = $this->getCrmContext($user, $message);
+        if (!empty($structuredContext)) {
             $openaiMessages[] = [
                 'role' => 'system',
                 'content' => "Structured CRM data for this user (use this as ground truth when answering):\n".json_encode($structuredContext),

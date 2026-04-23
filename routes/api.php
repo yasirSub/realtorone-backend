@@ -2900,6 +2900,95 @@ Route::post('/login/google', function (Request $request) {
     ]);
 });
 
+Route::post('/auth/apple/callback', function (Request $request) {
+    Log::info('[APPLE LOGIN] Request received', [
+        'has_identity_token' => $request->filled('identity_token'),
+        'email_hint' => $request->input('email'),
+    ]);
+
+    $data = $request->validate([
+        'identity_token' => ['required', 'string'],
+        'email' => ['nullable', 'email'],
+        'first_name' => ['nullable', 'string'],
+        'last_name' => ['nullable', 'string'],
+        'user_identifier' => ['nullable', 'string'],
+    ]);
+
+    try {
+        // Simple JWT decode for Apple identity token
+        $tks = explode('.', $data['identity_token']);
+        if (count($tks) !== 3) {
+            return response()->json(['status' => 'error', 'message' => 'Invalid Apple token.'], 401);
+        }
+        $payload = json_decode(base64_decode($tks[1]), true);
+        
+        $appleEmail = strtolower(trim((string) ($payload['email'] ?? $data['email'] ?? '')));
+        
+        if ($appleEmail === '') {
+            return response()->json(['status' => 'error', 'message' => 'Apple email not provided.'], 401);
+        }
+
+        $firstName = $data['first_name'] ?? ($payload['given_name'] ?? '');
+        $lastName = $data['last_name'] ?? ($payload['family_name'] ?? '');
+        $name = trim("$firstName $lastName");
+        
+        if ($name === '') {
+            $name = Str::before($appleEmail, '@');
+        }
+
+        $user = User::whereRaw('LOWER(email) = ?', [$appleEmail])->first();
+        if (!$user) {
+            $user = User::create([
+                'name' => $name,
+                'email' => $appleEmail,
+                'password' => Hash::make(Str::random(40)),
+                'status' => 'active',
+                'registration_source' => 'apple',
+            ]);
+            $user->email_verified_at = now();
+            $user->save();
+            Log::info('[APPLE LOGIN] user created', ['user_id' => $user->id, 'email' => $user->email]);
+        } else {
+            if (trim((string) $user->name) === '' && $name !== '') {
+                $user->name = $name;
+            }
+            if (!$user->email_verified_at) {
+                $user->email_verified_at = now();
+            }
+            if (!$user->registration_source) {
+                $user->registration_source = 'apple';
+            }
+            $user->save();
+            Log::info('[APPLE LOGIN] existing user login', ['user_id' => $user->id, 'email' => $user->email]);
+        }
+
+        if ($user->status === 'inactive') {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Your account is deactivated. Contact support for recovery.',
+            ], 403);
+        }
+
+        $token = bin2hex(random_bytes(32));
+        $user->update(['remember_token' => $token]);
+        Log::info('[APPLE LOGIN] success', ['user_id' => $user->id]);
+
+        return response()->json([
+            'status' => 'ok',
+            'token' => $token,
+            'user' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+            ],
+        ]);
+    } catch (\Exception $e) {
+        Log::error('[APPLE LOGIN] Exception: ' . $e->getMessage());
+        return response()->json(['status' => 'error', 'message' => 'Apple login failed.'], 500);
+    }
+});
+
+
 Route::post('/user/push-token', function (Request $request) {
     $user = getAuthUser($request);
     if (!$user) {
