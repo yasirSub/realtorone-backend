@@ -47,18 +47,20 @@ class ChatController extends Controller
         $base = <<<'PROMPT'
 You are Reven, a friendly AI assistant for the RealtorOne real estate training app. You help users with:
 
-- **Courses & training**: Enrolled courses, course progress, the Cold Calling Master program, Million Dirham Beliefs Program, and learning content
-- **Daily tasks**: Tasks on the Dashboard, activity logging, momentum scores
-- **Leaderboard & badges**: How to improve rank, earned badges, streaks
-- **Webinars & Events**: Upcoming live sessions, special guest masterclasses, and how to join via Zoom links
-- **Account**: Profile updates, avatar, settings
-- **Real estate tips**: Cold calling, prospecting, follow-ups, client meetings
-- **Client & CRM insights**: Active clients, hot leads, pipeline status, and deal activity available in the app for the authenticated user
+- Courses and training: Enrolled courses, course progress, the Cold Calling Master program, Million Dirham Beliefs Program, and learning content
+- Daily tasks: Tasks on the Dashboard, activity logging, momentum scores
+- Leaderboard and badges: How to improve rank, earned badges, streaks
+- Webinars and events: Upcoming live sessions, special guest masterclasses, and how to join via Zoom links
+- Account: Profile updates, avatar, settings
+- Real estate tips: Cold calling, prospecting, follow-ups, client meetings
+- Client and CRM insights: Active clients, hot leads, pipeline status, and deal activity available in the app for the authenticated user
 
-Be concise, helpful, and encouraging. Use markdown for lists when helpful.
+Be concise, helpful, and encouraging. Keep replies short. Avoid bold markdown unless absolutely necessary.
+Prefer action buttons/commands for navigable app sections instead of long explanations.
 When structured CRM/app data is provided in context, treat it as trusted in-app data and answer from it.
 Do not claim you cannot access CRM/client data if it is provided in context for this user.
 If data is not present in context, say what is missing and ask a short clarifying follow-up.
+If the user asks about Dashboard, Courses, Badges, Profile, Deal Room, or similar sections, return a short reply plus the matching navigation command.
 PROMPT;
         $name = trim((string) ($user?->name ?? ''));
         $tier = trim((string) ($user?->membership_tier ?? 'Consultant'));
@@ -107,7 +109,7 @@ PROMPT;
 
     /**
      * Basic keyword replies when OPENAI_API_KEY is not set.
-     * Returns ['reply' => string, 'courses' => array|null, 'commands' => array|null].
+     * Returns ['reply' => string, 'courses' => array|null, 'commands' => array|null, 'clients' => array|null].
      */
     private function getBasicReply(string $message, ?User $user): array
     {
@@ -115,12 +117,12 @@ PROMPT;
         $displayName = trim((string) ($user?->name ?? ''));
         $displayName = $displayName !== '' ? $displayName : 'there';
         if (preg_match('/\b(hi|hello|hey|hola|howdy)\b/', $text)) {
-            return ['reply' => "Hi {$displayName}! I\'m Reven, your assistant for the RealtorOne app. Type **help** to see what I can do.", 'courses' => null, 'commands' => null];
+            return ['reply' => "Hi {$displayName}. Tap a button below or type help.", 'courses' => null, 'commands' => null];
         }
         if (preg_match('/\b(what can you do|help|commands|capabilities)\b/', $text)) {
             $commands = $this->getHelpCommands();
             return [
-                'reply' => 'Here\'s what I can do. Tap any command below or type it in the chat:',
+                'reply' => 'Tap a button below.',
                 'courses' => null,
                 'commands' => $commands,
             ];
@@ -128,34 +130,146 @@ PROMPT;
         if (preg_match('/\b(course|courses|training|learning|enrolled|what are the courses|list courses|show courses)\b/', $text)) {
             $courses = $this->fetchAiCourseListForUser($user);
             $reply = $courses->isEmpty()
-                ? 'No courses available right now. Check the Courses tab for updates!'
-                : 'Here are the courses available to you:';
+                ? 'No courses available right now.'
+                : 'Open Courses below.';
             return [
                 'reply' => $reply,
                 'courses' => $courses->toArray(),
+                'commands' => [$this->getNavigationCommand('courses', 'Open Courses', 'courses', 'Go to your courses')],
             ];
         }
         if (preg_match('/\b(task|tasks|today|daily|dashboard)\b/', $text)) {
-            return ['reply' => 'Daily tasks are on the Dashboard. Log activities there to build your momentum score.', 'courses' => null, 'commands' => null];
+            return [
+                'reply' => 'Open Dashboard below.',
+                'courses' => null,
+                'commands' => [$this->getNavigationCommand('dashboard', 'Open Dashboard', 'dashboard', 'Go to today\'s plan')],
+            ];
         }
         if (preg_match('/\b(badge|badges|leaderboard|rank|streak)\b/', $text)) {
-            return ['reply' => 'Head to the Badges tab for milestones and Leaderboard for your rank. Complete tasks and courses to climb!', 'courses' => null, 'commands' => null];
+            return [
+                'reply' => 'Open Badges below.',
+                'courses' => null,
+                'commands' => [$this->getNavigationCommand('badges', 'Open Badges', 'badges', 'Go to badges and leaderboard')],
+            ];
         }
         if (preg_match('/\b(profile|account|settings|update)\b/', $text)) {
-            return ['reply' => 'Tap your avatar to open profile settings and update name, photo, and preferences.', 'courses' => null, 'commands' => null];
+            return [
+                'reply' => 'Open Profile below.',
+                'courses' => null,
+                'commands' => [$this->getNavigationCommand('profile', 'Open Profile', 'profile', 'Go to your profile')],
+            ];
         }
         if (preg_match('/\b(cold call|cold calling|prospect|follow.?up)\b/i', $text)) {
-            return ['reply' => 'Cold calling tips: great opener + active listening + clear objective. Check the Cold Calling Master course in your Courses tab!', 'courses' => null, 'commands' => null];
+            return [
+                'reply' => 'Open Courses below.',
+                'courses' => null,
+                'commands' => [$this->getNavigationCommand('courses', 'Open Courses', 'courses', 'Go to training')],
+            ];
         }
         if (preg_match('/\b(webinar|webinars|live session|zoom link|when is the next|meeting)\b/i', $text)) {
             $webinars = \App\Models\Webinar::where('is_active', true)->where('scheduled_at', '>', now())->limit(5)->get();
             if ($webinars->isEmpty()) {
-                return ['reply' => 'There are no upcoming webinars scheduled at the moment. Check back later!', 'courses' => null, 'commands' => null];
+                return ['reply' => 'No webinars are scheduled right now.', 'courses' => null, 'commands' => null];
             }
-            $reply = "Here are the upcoming webinars:\n" . $webinars->map(fn($w) => "- **{$w->title}**: " . optional($w->scheduled_at)->toDayDateTimeString())->implode("\n");
+            $reply = 'Open Webinars below.';
             return ['reply' => $reply, 'courses' => null, 'commands' => null];
         }
-        return ['reply' => "I\'m here to help, {$displayName}! Type **help** to see what I can do, or try: courses, tasks, badges, profile.", 'courses' => null, 'commands' => null];
+        return ['reply' => "I\'m here to help, {$displayName}. Tap a button below.", 'courses' => null, 'commands' => $this->getHelpCommands()];
+    }
+
+    private function isClientListRequest(string $message): bool
+    {
+        return (bool) preg_match('/\b(show|list|all|my|view|display|open)\b.*\b(client|clients|client name|client names|lead|leads|hot lead|hot leads|crm|deal room)\b/i', $message)
+            || (bool) preg_match('/\b(client name|client names|client list|clients list|my clients|active clients|active client|lead list|lead lists)\b/i', $message);
+    }
+
+    private function getOpenDealRoomCommand(): array
+    {
+        return [
+            'keyword' => 'open deal room',
+            'label' => 'Open Deal Room',
+            'description' => 'Jump to your client workspace',
+            'target' => 'client-list',
+        ];
+    }
+
+    private function getNavigationCommand(string $keyword, string $label, string $target, string $description): array
+    {
+        return [
+            'keyword' => $keyword,
+            'label' => $label,
+            'description' => $description,
+            'target' => $target,
+        ];
+    }
+
+    private function buildNavigationResponse(string $message): ?array
+    {
+        $text = strtolower(trim($message));
+
+        if (preg_match('/\b(dashboard|today\'?s plan|today plan|plan for today|daily plan|my day)\b/i', $text)) {
+            return [
+                'reply' => 'Open Dashboard below.',
+                'commands' => [$this->getNavigationCommand('dashboard', 'Open Dashboard', 'dashboard', 'Go to today\'s plan')],
+            ];
+        }
+
+        if (preg_match('/\b(task|tasks|todo|to-do|today|daily)\b/i', $text)) {
+            return [
+                'reply' => 'Open Dashboard below.',
+                'commands' => [$this->getNavigationCommand('tasks', 'Open Dashboard', 'dashboard', 'Go to today\'s tasks')],
+            ];
+        }
+
+        if (preg_match('/\b(course|courses|training|learning|lesson|lessons)\b/i', $text)) {
+            return [
+                'reply' => 'Open Courses below.',
+                'commands' => [$this->getNavigationCommand('courses', 'Open Courses', 'courses', 'Go to your courses')],
+            ];
+        }
+
+        if (preg_match('/\b(badge|badges|leaderboard|rank|streak)\b/i', $text)) {
+            return [
+                'reply' => 'Open Badges below.',
+                'commands' => [$this->getNavigationCommand('badges', 'Open Badges', 'badges', 'Go to badges and leaderboard')],
+            ];
+        }
+
+        if (preg_match('/\b(profile|account|settings|avatar)\b/i', $text)) {
+            return [
+                'reply' => 'Open Profile below.',
+                'commands' => [$this->getNavigationCommand('profile', 'Open Profile', 'profile', 'Go to your profile')],
+            ];
+        }
+
+        if (preg_match('/\b(deal room|crm|client list|clients list|hot leads|pipeline)\b/i', $text)) {
+            return [
+                'reply' => 'Open Deal Room below.',
+                'commands' => [$this->getOpenDealRoomCommand()],
+            ];
+        }
+
+        return null;
+    }
+
+    private function buildCrmClientListResponse(User $user, string $message, array $structuredContext): ?array
+    {
+        if (! $this->isClientListRequest($message)) {
+            return null;
+        }
+
+        $clients = $structuredContext['active_clients'] ?? [];
+        $clients = is_array($clients) ? array_values($clients) : [];
+
+        $reply = !empty($clients)
+            ? 'Here are your active clients:'
+            : 'I could not find any active clients in your CRM yet. Open Deal Room to add or review leads.';
+
+        return [
+            'reply' => $reply,
+            'clients' => $clients,
+            'commands' => [$this->getOpenDealRoomCommand()],
+        ];
     }
 
     private function getRuntimeOpenAiKey(): ?string
@@ -267,7 +381,7 @@ PROMPT;
 
         $tier = (string) ($user->membership_tier ?: 'Consultant');
         // Only upsell when access is blocked by tier (not when key/provider missing).
-        return rtrim($reply)."\n\n**AI replies are not enabled for your tier ({$tier}).** Upgrade to unlock full AI coaching in the app (Subscriptions).";
+        return rtrim($reply)."\n\nAI replies are not enabled for your tier ({$tier}). Upgrade to unlock full AI coaching in the app (Subscriptions).";
     }
 
     private function getRuntimeKnowledgeBase(): ?string
@@ -279,11 +393,11 @@ PROMPT;
     private function getHelpCommands(): array
     {
         return [
-            ['keyword' => 'courses', 'label' => '📚 Courses', 'description' => 'See your available courses'],
-            ['keyword' => 'tasks', 'label' => '📋 Tasks', 'description' => 'Daily tasks & dashboard'],
-            ['keyword' => 'badges', 'label' => '🏆 Badges', 'description' => 'Leaderboard & milestones'],
-            ['keyword' => 'profile', 'label' => '⚙️ Profile', 'description' => 'Account settings'],
-            ['keyword' => 'cold calling tips', 'label' => '📞 Cold calling', 'description' => 'Tips & training'],
+            $this->getNavigationCommand('dashboard', 'Dashboard', 'dashboard', 'Open today\'s plan'),
+            $this->getNavigationCommand('courses', 'Courses', 'courses', 'Open learning content'),
+            $this->getNavigationCommand('badges', 'Badges', 'badges', 'Open badges and leaderboard'),
+            $this->getNavigationCommand('profile', 'Profile', 'profile', 'Open your profile'),
+            $this->getNavigationCommand('open deal room', 'Deal Room', 'client-list', 'Open your CRM workspace'),
         ];
     }
 
@@ -467,6 +581,61 @@ PROMPT;
             'content' => $message,
         ]);
 
+        $structuredContext = $this->getCrmContext($user, $message);
+        $crmClientList = $this->buildCrmClientListResponse($user, $message, $structuredContext);
+        if ($crmClientList !== null) {
+            $contentToStore = json_encode(array_filter([
+                'text' => $crmClientList['reply'],
+                'clients' => $crmClientList['clients'] ?? null,
+                'commands' => $crmClientList['commands'] ?? null,
+            ]));
+
+            ChatMessage::create([
+                'chat_session_id' => $session->id,
+                'user_id' => null,
+                'role' => 'assistant',
+                'content' => $contentToStore,
+            ]);
+
+            $payload = [
+                'success' => true,
+                'reply' => $crmClientList['reply'],
+                'session_id' => $session->id,
+            ];
+            if (!empty($crmClientList['clients'])) {
+                $payload['clients'] = $crmClientList['clients'];
+            }
+            if (!empty($crmClientList['commands'])) {
+                $payload['commands'] = $crmClientList['commands'];
+            }
+            return response()->json($payload);
+        }
+
+        $navResponse = $this->buildNavigationResponse($message);
+        if ($navResponse !== null) {
+            $contentToStore = json_encode(array_filter([
+                'text' => $navResponse['reply'],
+                'commands' => $navResponse['commands'] ?? null,
+            ]));
+
+            ChatMessage::create([
+                'chat_session_id' => $session->id,
+                'user_id' => null,
+                'role' => 'assistant',
+                'content' => $contentToStore,
+            ]);
+
+            $payload = [
+                'success' => true,
+                'reply' => $navResponse['reply'],
+                'session_id' => $session->id,
+            ];
+            if (!empty($navResponse['commands'])) {
+                $payload['commands'] = $navResponse['commands'];
+            }
+            return response()->json($payload);
+        }
+
         // Build messages for OpenAI
         $history = $session->messages()->whereIn('role', ['user', 'assistant'])->orderBy('id')->get();
         $systemContent = $this->getSystemPrompt($user, $this->getRuntimeKnowledgeBase());
@@ -482,8 +651,6 @@ PROMPT;
 
         $openaiMessages = [['role' => 'system', 'content' => $systemContent]];
 
-        // Structured CRM Context
-        $structuredContext = $this->getCrmContext($user, $message);
         if (!empty($structuredContext)) {
             $openaiMessages[] = [
                 'role' => 'system',
@@ -513,9 +680,10 @@ PROMPT;
             }
             $courses = $basic['courses'] ?? null;
             $commands = $basic['commands'] ?? null;
+            $clients = $basic['clients'] ?? null;
             $contentToStore = $reply;
-            if (($courses !== null && !empty($courses)) || ($commands !== null && !empty($commands))) {
-                $contentToStore = json_encode(array_filter(['text' => $reply, 'courses' => $courses, 'commands' => $commands]));
+            if (($courses !== null && !empty($courses)) || ($commands !== null && !empty($commands)) || ($clients !== null && !empty($clients))) {
+                $contentToStore = json_encode(array_filter(['text' => $reply, 'courses' => $courses, 'commands' => $commands, 'clients' => $clients]));
             }
             ChatMessage::create([
                 'chat_session_id' => $session->id,
@@ -533,6 +701,9 @@ PROMPT;
             }
             if ($commands !== null) {
                 $payload['commands'] = $commands;
+            }
+            if ($clients !== null) {
+                $payload['clients'] = $clients;
             }
             return response()->json($payload);
         }
@@ -656,6 +827,59 @@ PROMPT;
             'content' => $message,
         ]);
 
+        $structuredContext = $this->getCrmContext($user, $message);
+        $crmClientList = $this->buildCrmClientListResponse($user, $message, $structuredContext);
+        if ($crmClientList !== null) {
+            $contentToStore = json_encode(array_filter([
+                'text' => $crmClientList['reply'],
+                'clients' => $crmClientList['clients'] ?? null,
+                'commands' => $crmClientList['commands'] ?? null,
+            ]));
+
+            ChatMessage::create([
+                'chat_session_id' => $session->id,
+                'user_id' => null,
+                'role' => 'assistant',
+                'content' => $contentToStore,
+            ]);
+
+            $payload = [
+                'success' => true,
+                'reply' => $crmClientList['reply'],
+                'session_id' => $session->id,
+            ];
+            if (!empty($crmClientList['clients'])) {
+                $payload['clients'] = $crmClientList['clients'];
+            }
+            if (!empty($crmClientList['commands'])) {
+                $payload['commands'] = $crmClientList['commands'];
+            }
+            return response()->json($payload);
+        }
+
+        $navResponse = $this->buildNavigationResponse($message);
+        if ($navResponse !== null) {
+            ChatMessage::create([
+                'chat_session_id' => $session->id,
+                'user_id' => null,
+                'role' => 'assistant',
+                'content' => json_encode(array_filter([
+                    'text' => $navResponse['reply'],
+                    'commands' => $navResponse['commands'] ?? null,
+                ])),
+            ]);
+
+            $payload = [
+                'success' => true,
+                'reply' => $navResponse['reply'],
+                'session_id' => $session->id,
+            ];
+            if (!empty($navResponse['commands'])) {
+                $payload['commands'] = $navResponse['commands'];
+            }
+            return response()->json($payload);
+        }
+
         $history = $session->messages()
             ->whereIn('role', ['user', 'assistant'])
             ->orderBy('id')
@@ -666,8 +890,6 @@ PROMPT;
             ['role' => 'system', 'content' => $systemContent],
         ];
 
-        // Structured CRM Context for admin test path as well.
-        $structuredContext = $this->getCrmContext($user, $message);
         if (!empty($structuredContext)) {
             $openaiMessages[] = [
                 'role' => 'system',
