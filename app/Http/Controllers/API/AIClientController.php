@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Illuminate\Http\Client\PendingRequest;
 
 class AIClientController extends Controller
 {
@@ -51,7 +52,7 @@ class AIClientController extends Controller
         $prompt = $this->buildPrompt($user, $client, $mode, $tone);
 
         try {
-            $response = Http::withToken($apiKey)
+            $response = $this->applyProviderHeaders(Http::withToken($apiKey))
                 ->timeout(60)
                 ->post($this->getRuntimeChatCompletionsUrl(), [
                     'model' => $this->getRuntimeOpenAiModel(),
@@ -64,8 +65,21 @@ class AIClientController extends Controller
                 ]);
 
             if (!$response->successful()) {
-                Log::error('AI Generation Error', ['status' => $response->status(), 'body' => $response->json()]);
-                return response()->json(['success' => false, 'message' => 'AI service error.'], 502);
+                $provider = (string) cache('ai_provider', 'openai');
+                $model = $this->getRuntimeOpenAiModel();
+                $err = $this->extractProviderErrorMessage($response);
+                Log::error('AI Generation Error', [
+                    'provider' => $provider,
+                    'model' => $model,
+                    'url' => $this->getRuntimeChatCompletionsUrl(),
+                    'status' => $response->status(),
+                    'body' => $response->json(),
+                    'raw' => Str::limit((string) $response->body(), 1200),
+                ]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'AI service error ['.$provider.' | '.$model.' | HTTP '.$response->status().']: '.$err,
+                ], 502);
             }
 
             $data = $response->json();
@@ -138,7 +152,65 @@ Please write a high-converting message that encourages a reply. If it's for What
     private function getRuntimeOpenAiModel(): string
     {
         $model = trim((string) cache('ai_openai_model', 'gpt-4o-mini'));
-        return $model !== '' ? $model : 'gpt-4o-mini';
+        $model = $model !== '' ? $model : 'gpt-4o-mini';
+
+        if (cache('ai_provider', 'openai') === 'openrouter') {
+            $normalized = strtolower($model);
+            if ($normalized === 'gpt-4o-mini') {
+                return 'openai/gpt-4o-mini';
+            }
+            if ($normalized === 'gpt-4o') {
+                return 'openai/gpt-4o';
+            }
+            if ($normalized === 'gpt-4.1-mini') {
+                return 'openai/gpt-4.1-mini';
+            }
+            if ($normalized === 'gpt-4.1') {
+                return 'openai/gpt-4.1';
+            }
+        }
+
+        return $model;
+    }
+
+    private function applyProviderHeaders(PendingRequest $request): PendingRequest
+    {
+        if (cache('ai_provider', 'openai') !== 'openrouter') {
+            return $request;
+        }
+
+        return $request->withHeaders([
+            'HTTP-Referer' => config('app.url', 'https://realtorone.app'),
+            'X-Title' => config('app.name', 'RealtorOne'),
+        ]);
+    }
+
+    private function extractProviderErrorMessage($response): string
+    {
+        $body = $response->json();
+        if (is_array($body)) {
+            $candidates = [
+                $body['error']['message'] ?? null,
+                $body['message'] ?? null,
+                $body['error'] ?? null,
+            ];
+            foreach ($candidates as $candidate) {
+                if (is_string($candidate) && trim($candidate) !== '') {
+                    return trim($candidate);
+                }
+            }
+            $encoded = json_encode($body);
+            if (is_string($encoded) && $encoded !== '') {
+                return $encoded;
+            }
+        }
+
+        $raw = trim((string) $response->body());
+        if ($raw !== '') {
+            return Str::limit(preg_replace('/\s+/', ' ', $raw) ?? $raw, 300);
+        }
+
+        return 'Unknown provider error';
     }
 
     private function isAiAllowedForUser(User $user): bool

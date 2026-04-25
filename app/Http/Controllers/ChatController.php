@@ -53,8 +53,12 @@ You are Reven, a friendly AI assistant for the RealtorOne real estate training a
 - **Webinars & Events**: Upcoming live sessions, special guest masterclasses, and how to join via Zoom links
 - **Account**: Profile updates, avatar, settings
 - **Real estate tips**: Cold calling, prospecting, follow-ups, client meetings
+- **Client & CRM insights**: Active clients, hot leads, pipeline status, and deal activity available in the app for the authenticated user
 
-Be concise, helpful, and encouraging. If asked about something outside this scope, politely say you focus on real estate training and the app. Use markdown for lists when helpful.
+Be concise, helpful, and encouraging. Use markdown for lists when helpful.
+When structured CRM/app data is provided in context, treat it as trusted in-app data and answer from it.
+Do not claim you cannot access CRM/client data if it is provided in context for this user.
+If data is not present in context, say what is missing and ask a short clarifying follow-up.
 PROMPT;
         $name = trim((string) ($user?->name ?? ''));
         $tier = trim((string) ($user?->membership_tier ?? 'Consultant'));
@@ -173,7 +177,68 @@ PROMPT;
     private function getRuntimeOpenAiModel(): string
     {
         $model = trim((string) cache('ai_openai_model', 'gpt-4o-mini'));
-        return $model !== '' ? $model : 'gpt-4o-mini';
+        $model = $model !== '' ? $model : 'gpt-4o-mini';
+
+        // OpenRouter expects provider-prefixed model IDs for many models.
+        if ($this->getRuntimeProvider() === 'openrouter') {
+            $normalized = strtolower($model);
+            if ($normalized === 'gpt-4o-mini') {
+                return 'openai/gpt-4o-mini';
+            }
+            if ($normalized === 'gpt-4o') {
+                return 'openai/gpt-4o';
+            }
+            if ($normalized === 'gpt-4.1-mini') {
+                return 'openai/gpt-4.1-mini';
+            }
+            if ($normalized === 'gpt-4.1') {
+                return 'openai/gpt-4.1';
+            }
+        }
+
+        return $model;
+    }
+
+    private function applyProviderHeaders($requestBuilder)
+    {
+        if ($this->getRuntimeProvider() !== 'openrouter') {
+            return $requestBuilder;
+        }
+
+        return $requestBuilder->withHeaders([
+            'HTTP-Referer' => config('app.url', 'https://realtorone.app'),
+            'X-Title' => config('app.name', 'RealtorOne'),
+        ]);
+    }
+
+    private function extractProviderErrorMessage(HttpResponse $response): string
+    {
+        $body = $response->json();
+        if (is_array($body)) {
+            $candidates = [
+                $body['error']['message'] ?? null,
+                $body['message'] ?? null,
+                $body['error'] ?? null,
+            ];
+
+            foreach ($candidates as $candidate) {
+                if (is_string($candidate) && trim($candidate) !== '') {
+                    return trim($candidate);
+                }
+            }
+
+            $encoded = json_encode($body);
+            if (is_string($encoded) && $encoded !== '') {
+                return $encoded;
+            }
+        }
+
+        $raw = trim((string) $response->body());
+        if ($raw !== '') {
+            return Str::limit(preg_replace('/\s+/', ' ', $raw) ?? $raw, 300);
+        }
+
+        return 'Unknown provider error';
     }
 
     private function getUseCustomKb(): bool
@@ -300,7 +365,7 @@ PROMPT;
 
     private function getLeadContext(User $user, string $message): array
     {
-        if (!preg_match('/\b(active client|active clients|current client|current deal|hot lead|pipeline)\b/i', $message)) {
+        if (!preg_match('/\b(active client|active clients|client|clients|client name|client names|lead|leads|hot lead|pipeline|crm|database|contact|contacts|follow\s?-?up)\b/i', $message)) {
             return [];
         }
 
@@ -356,6 +421,26 @@ PROMPT;
         );
     }
 
+    private function getCrmFormattingInstruction(array $structuredContext): ?string
+    {
+        $hasActiveClients = !empty($structuredContext['active_clients']) && is_array($structuredContext['active_clients']);
+        $hasDeals = !empty($structuredContext['deals_closed_this_month']) && is_array($structuredContext['deals_closed_this_month']);
+
+        if (!$hasActiveClients && !$hasDeals) {
+            return null;
+        }
+
+        return <<<'PROMPT'
+Formatting requirement for CRM replies:
+- Keep reply short and practical.
+- If active clients are present, include a markdown table with columns: Client | Status | Source | Value.
+- Show up to 10 rows, ordered by most recent data already provided.
+- If deals data is present, add a second short markdown table with columns: Client | Date | Source | Value.
+- If any field is missing, show '-' in that cell.
+- Do not claim lack of access to CRM data when it is provided in structured context.
+PROMPT;
+    }
+
     public function send(Request $request): JsonResponse
     {
         $user = getAuthUser($request);
@@ -404,6 +489,13 @@ PROMPT;
                 'role' => 'system',
                 'content' => "Structured CRM data for this user (use this as ground truth when answering):\n".json_encode($structuredContext),
             ];
+            $crmFormatInstruction = $this->getCrmFormattingInstruction($structuredContext);
+            if ($crmFormatInstruction !== null) {
+                $openaiMessages[] = [
+                    'role' => 'system',
+                    'content' => $crmFormatInstruction,
+                ];
+            }
         }
 
         $recent = $history->take(-self::MAX_HISTORY);
@@ -449,7 +541,7 @@ PROMPT;
             $modelToUse = $this->getRuntimeOpenAiModel();
             $url = $this->getRuntimeChatCompletionsUrl();
             /** @var HttpResponse $response */
-            $response = Http::withToken($apiKey)
+            $response = $this->applyProviderHeaders(Http::withToken($apiKey))
                 ->timeout(60)
                 ->post($url, [
                     'model' => $modelToUse,
@@ -459,11 +551,19 @@ PROMPT;
 
             if (!$response->successful()) {
                 $body = $response->json();
-                $err = $body['error']['message'] ?? $response->body();
-                Log::error('OpenAI error', ['status' => $response->status(), 'body' => $body]);
+                $provider = $this->getRuntimeProvider();
+                $err = $this->extractProviderErrorMessage($response);
+                Log::error('AI provider error', [
+                    'provider' => $provider,
+                    'model' => $modelToUse,
+                    'url' => $url,
+                    'status' => $response->status(),
+                    'body' => $body,
+                    'raw' => Str::limit((string) $response->body(), 1200),
+                ]);
                 return response()->json([
                     'success' => false,
-                    'message' => 'AI service error: ' . $err,
+                    'message' => 'AI service error ['.$provider.' | '.$modelToUse.' | HTTP '.$response->status().']: '.$err,
                 ], 502);
             }
 
@@ -566,6 +666,22 @@ PROMPT;
             ['role' => 'system', 'content' => $systemContent],
         ];
 
+        // Structured CRM Context for admin test path as well.
+        $structuredContext = $this->getCrmContext($user, $message);
+        if (!empty($structuredContext)) {
+            $openaiMessages[] = [
+                'role' => 'system',
+                'content' => "Structured CRM data for this user (use this as ground truth when answering):\n".json_encode($structuredContext),
+            ];
+            $crmFormatInstruction = $this->getCrmFormattingInstruction($structuredContext);
+            if ($crmFormatInstruction !== null) {
+                $openaiMessages[] = [
+                    'role' => 'system',
+                    'content' => $crmFormatInstruction,
+                ];
+            }
+        }
+
         $recent = $history->take(-self::MAX_HISTORY);
         foreach ($recent as $m) {
             $parsed = $this->parseStoredContent($m->content);
@@ -592,7 +708,7 @@ PROMPT;
             $modelToUse = $this->getRuntimeOpenAiModel();
             $url = $this->getRuntimeChatCompletionsUrl();
             /** @var HttpResponse $response */
-            $response = Http::withToken($apiKey)
+            $response = $this->applyProviderHeaders(Http::withToken($apiKey))
                 ->timeout(60)
                 ->post($url, [
                     'model' => $modelToUse,
@@ -602,11 +718,19 @@ PROMPT;
 
             if (! $response->successful()) {
                 $body = $response->json();
-                $err = $body['error']['message'] ?? $response->body();
-                Log::error('OpenAI error (adminSendForUser)', ['status' => $response->status(), 'body' => $body]);
+                $provider = $this->getRuntimeProvider();
+                $err = $this->extractProviderErrorMessage($response);
+                Log::error('AI provider error (adminSendForUser)', [
+                    'provider' => $provider,
+                    'model' => $modelToUse,
+                    'url' => $url,
+                    'status' => $response->status(),
+                    'body' => $body,
+                    'raw' => Str::limit((string) $response->body(), 1200),
+                ]);
                 return response()->json([
                     'success' => false,
-                    'message' => 'AI service error: '.$err,
+                    'message' => 'AI service error ['.$provider.' | '.$modelToUse.' | HTTP '.$response->status().']: '.$err,
                 ], 502);
             }
 

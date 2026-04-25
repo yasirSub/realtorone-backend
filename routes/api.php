@@ -1013,15 +1013,15 @@ Route::post('/admin/users/{id}/change-password', function (Illuminate\Http\Reque
     if (!isAdminUser(getAuthUser($request))) {
         return response()->json(['error' => 'Unauthorized'], 403);
     }
-    
+
     $user = \App\Models\User::findOrFail($id);
     $data = $request->validate([
         'password' => 'required|string|min:8',
     ]);
-    
+
     $user->password = Hash::make($data['password']);
     $user->save();
-    
+
     return response()->json(['success' => true, 'message' => 'Password updated successfully']);
 });
 
@@ -1332,7 +1332,7 @@ Route::get('stream/{filename}', function (Request $request, $filename) {
     if (str_ends_with(strtolower($safeFilename), '.mp4')) {
         $mimeType = 'video/mp4';
     }
-    
+
     $fileSize = filesize($path);
     $start = 0;
     $end = $fileSize - 1;
@@ -1352,7 +1352,7 @@ Route::get('stream/{filename}', function (Request $request, $filename) {
             $start = isset($matches[1]) && $matches[1] !== '' ? (int) $matches[1] : 0;
             $end = isset($matches[2]) && $matches[2] !== '' ? (int) $matches[2] : $fileSize - 1;
             $end = min($end, $fileSize - 1);
-            
+
             $headers['Content-Range'] = "bytes {$start}-{$end}/{$fileSize}";
             $statusCode = 206;
         }
@@ -1373,19 +1373,21 @@ Route::get('stream/{filename}', function (Request $request, $filename) {
 
     return response()->stream(function () use ($path, $start, $length) {
         $handle = fopen($path, 'rb');
-        if (!$handle) return;
-        
+        if (!$handle)
+            return;
+
         fseek($handle, $start);
         $remaining = $length;
-        
+
         // Increase memory limit for streaming if needed
         @ini_set('memory_limit', '512M');
-        
+
         try {
             while (!feof($handle) && $remaining > 0) {
                 // Check if connection is still alive
-                if (connection_aborted()) break;
-                
+                if (connection_aborted())
+                    break;
+
                 $chunk = min(1024 * 128, $remaining); // 128KB chunks for better speed/memory balance
                 echo fread($handle, $chunk);
                 $remaining -= $chunk;
@@ -2921,17 +2923,17 @@ Route::post('/auth/apple/callback', function (Request $request) {
             Log::warning('[APPLE LOGIN] Invalid token structure', ['token_parts' => count($tks)]);
             return response()->json(['status' => 'error', 'message' => 'Invalid Apple token structure.'], 401);
         }
-        
+
         $payloadRaw = str_replace(['-', '_'], ['+', '/'], $tks[1]);
         $payload = json_decode(base64_decode($payloadRaw), true);
-        
+
         if (!$payload) {
             Log::warning('[APPLE LOGIN] Failed to decode payload', ['raw' => $tks[1]]);
             return response()->json(['status' => 'error', 'message' => 'Invalid Apple token payload.'], 401);
         }
 
         $appleEmail = strtolower(trim((string) ($payload['email'] ?? $data['email'] ?? '')));
-        
+
         Log::info('[APPLE LOGIN] Payload decoded', [
             'email' => $appleEmail,
             'sub' => $payload['sub'] ?? 'missing',
@@ -2946,7 +2948,7 @@ Route::post('/auth/apple/callback', function (Request $request) {
         $firstName = $data['first_name'] ?? ($payload['given_name'] ?? '');
         $lastName = $data['last_name'] ?? ($payload['family_name'] ?? '');
         $name = trim("$firstName $lastName");
-        
+
         if ($name === '') {
             $name = Str::before($appleEmail, '@');
         }
@@ -3085,7 +3087,7 @@ Route::post('/password/forgot', function (Request $request) {
             $message->to($user->email);
             $message->subject('Reset Your Password - Realtor One');
         });
-        
+
         return response()->json([
             'status' => 'ok',
             'message' => 'Password reset token sent to your email',
@@ -3109,7 +3111,7 @@ Route::post('/password/reset', function (Request $request) {
 
     // Validate OTP using ichtrojan/laravel-otp
     $otp = (new Otp)->validate($data['email'], $data['token']);
-    
+
     if (!$otp->status) {
         return response()->json([
             'status' => 'error',
@@ -3194,7 +3196,7 @@ Route::post('/email/send-otp', function (Request $request) {
             $message->to($user->email);
             $message->subject('Verify Your Email - Realtor One');
         });
-        
+
         return response()->json([
             'status' => 'ok',
             'message' => 'Verification code sent to your email',
@@ -3217,7 +3219,7 @@ Route::post('/email/verify-otp', function (Request $request) {
 
     // Validate OTP using ichtrojan/laravel-otp
     $otp = (new Otp)->validate($data['email'], $data['token']);
-    
+
     if (!$otp->status) {
         return response()->json([
             'status' => 'error',
@@ -6077,9 +6079,11 @@ Route::group(['prefix' => 'admin/system'], function () {
 });
 
 if (!function_exists('getAuthUser')) {
-    function getAuthUser($request) {
+    function getAuthUser($request)
+    {
         $token = $request->bearerToken();
-        if (!$token) return null;
+        if (!$token)
+            return null;
         $accessToken = \Laravel\Sanctum\PersonalAccessToken::findToken($token);
         return $accessToken ? $accessToken->tokenable : null;
     }
