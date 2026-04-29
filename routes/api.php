@@ -396,6 +396,44 @@ Route::get('/admin/ai/users', function (Request $request) {
 });
 
 // Admin: AI runtime settings (API key + custom knowledge base text)
+function refineTextWithAi(string $text): string
+{
+    $apiKey = trim((string) cache('ai_openai_api_key', ''));
+    if ($apiKey === '') return $text;
+
+    $model = trim((string) cache('ai_openai_model', 'gpt-4o-mini'));
+    $url = trim((string) cache('ai_openai_base_url', ''));
+    if ($url === '') {
+        $provider = trim((string) cache('ai_provider', 'openai'));
+        $url = match ($provider) {
+            'openrouter' => 'https://openrouter.ai/api/v1/chat/completions',
+            'groq' => 'https://api.groq.com/openai/v1/chat/completions',
+            default => 'https://api.openai.com/v1/chat/completions',
+        };
+    }
+
+    try {
+        $response = \Illuminate\Support\Facades\Http::withToken($apiKey)
+            ->timeout(60)
+            ->post($url, [
+                'model' => $model,
+                'messages' => [
+                    ['role' => 'system', 'content' => 'You are a Knowledge Base architect. Your task is to take raw, messy text from a PDF (which contains artifacts like page numbers, headers, and broken lines) and RE-STRUCTURE it into clean, high-quality Markdown for an AI assistant to read. Remove irrelevant noise. Preserve all important factual data. Output ONLY the refined Markdown.'],
+                    ['role' => 'user', 'content' => "Refine this text:\n\n" . mb_substr($text, 0, 15000)], // Limit to avoid context issues during ingestion
+                ],
+                'max_tokens' => 2000,
+            ]);
+
+        if ($response->successful()) {
+            return trim($response->json('choices.0.message.content') ?? $text);
+        }
+    } catch (\Throwable $e) {
+        \Illuminate\Support\Facades\Log::error('AI Refinement failed', ['error' => $e->getMessage()]);
+    }
+
+    return $text;
+}
+
 Route::get('/admin/ai/settings', function (Request $request) {
     $admin = getAuthUser($request);
     if (!isAdminUser($admin)) {
@@ -501,6 +539,7 @@ Route::post('/admin/ai/settings', function (Request $request) {
             $id = trim((string) ($b['id'] ?? ''));
             $title = trim((string) ($b['title'] ?? ''));
             $content = trim((string) ($b['content'] ?? ''));
+            $prompt = trim((string) ($b['prompt'] ?? ''));
             $enabled = (bool) ($b['enabled'] ?? true);
             if ($id === '') {
                 $id = (string) \Illuminate\Support\Str::uuid();
@@ -511,6 +550,7 @@ Route::post('/admin/ai/settings', function (Request $request) {
                 'id' => mb_substr($id, 0, 60),
                 'title' => mb_substr($title, 0, 120),
                 'content' => mb_substr($content, 0, 200000),
+                'prompt' => mb_substr($prompt, 0, 1000),
                 'enabled' => $enabled,
             ];
         }
@@ -566,6 +606,7 @@ Route::post('/admin/ai/settings/knowledge-base-pdf', function (Request $request)
         'pdf' => 'required|file|mimes:pdf|max:51200',
         'mode' => 'nullable|string|in:append,replace',
         'title' => 'nullable|string|max:120',
+        'refine' => 'nullable|boolean',
     ]);
 
     $mode = (string) ($validated['mode'] ?? 'append');
@@ -602,6 +643,10 @@ Route::post('/admin/ai/settings/knowledge-base-pdf', function (Request $request)
     } catch (\Throwable $e) {
         \Illuminate\Support\Facades\Log::error('KB PDF parse failed', ['error' => $e->getMessage()]);
         return response()->json(['success' => false, 'message' => 'Could not parse PDF.'], 422);
+    }
+
+    if ($request->boolean('refine')) {
+        $text = refineTextWithAi($text);
     }
 
     // Safety cap: keep KB within route validation limit.
@@ -657,6 +702,7 @@ Route::post('/admin/ai/settings/kb-block/{blockId}/pdf', function (Request $requ
     $validated = $request->validate([
         'pdf' => 'required|file|mimes:pdf|max:51200',
         'title' => 'nullable|string|max:120',
+        'refine' => 'nullable|boolean',
     ]);
 
     $file = $request->file('pdf');
@@ -691,6 +737,10 @@ Route::post('/admin/ai/settings/kb-block/{blockId}/pdf', function (Request $requ
     } catch (\Throwable $e) {
         \Illuminate\Support\Facades\Log::error('KB block PDF parse failed', ['error' => $e->getMessage()]);
         return response()->json(['success' => false, 'message' => 'Could not parse PDF.'], 422);
+    }
+
+    if ($request->boolean('refine')) {
+        $text = refineTextWithAi($text);
     }
 
     $text = mb_substr($text, 0, 160000);
@@ -738,8 +788,15 @@ Route::post('/admin/ai/settings/kb-block/{blockId}/pdf', function (Request $requ
         if (!is_array($b) || !($b['enabled'] ?? true)) continue;
         $t = trim((string) ($b['title'] ?? ''));
         $c = trim((string) ($b['content'] ?? ''));
+        $p = trim((string) ($b['prompt'] ?? ''));
         if ($c === '') continue;
-        $joined[] = ($t !== '' ? "## " . $t . "\n" . $c : $c);
+        
+        $entry = ($t !== '' ? "## " . $t . "\n" : "");
+        if ($p !== '') {
+            $entry .= "INSTRUCTIONS: " . $p . "\n";
+        }
+        $entry .= $c;
+        $joined[] = $entry;
     }
     cache(['ai_custom_knowledge_base' => implode("\n\n---\n\n", $joined)], now()->addYears(5));
 
