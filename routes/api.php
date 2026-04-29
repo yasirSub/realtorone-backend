@@ -577,17 +577,31 @@ Route::post('/admin/ai/settings/knowledge-base-pdf', function (Request $request)
     try {
         $parser = new \Smalot\PdfParser\Parser();
         $pdf = $parser->parseFile($file->getRealPath());
-        $text = trim((string) $pdf->getText());
+        $text = (string) $pdf->getText();
+        
+        // If main getText is empty, try per-page extraction
+        if (trim($text) === '') {
+            $pages = $pdf->getPages();
+            foreach ($pages as $page) {
+                $text .= $page->getText();
+            }
+        }
+
+        $text = trim($text);
         $text = preg_replace('/[ \t]+/', ' ', $text);
         $text = preg_replace("/\n{3,}/", "\n\n", $text);
         $text = trim((string) $text);
+        
+        if ($text === '') {
+            $pageCount = count($pdf->getPages());
+            if ($pageCount > 0) {
+                return response()->json(['success' => false, 'message' => "PDF has {$pageCount} pages but no extractable text. It might be a scanned image or protected."], 422);
+            }
+            return response()->json(['success' => false, 'message' => 'PDF text was empty.'], 422);
+        }
     } catch (\Throwable $e) {
         \Illuminate\Support\Facades\Log::error('KB PDF parse failed', ['error' => $e->getMessage()]);
         return response()->json(['success' => false, 'message' => 'Could not parse PDF.'], 422);
-    }
-
-    if ($text === '') {
-        return response()->json(['success' => false, 'message' => 'PDF text was empty.'], 422);
     }
 
     // Safety cap: keep KB within route validation limit.
@@ -653,17 +667,30 @@ Route::post('/admin/ai/settings/kb-block/{blockId}/pdf', function (Request $requ
     try {
         $parser = new \Smalot\PdfParser\Parser();
         $pdf = $parser->parseFile($file->getRealPath());
-        $text = trim((string) $pdf->getText());
+        $text = (string) $pdf->getText();
+
+        if (trim($text) === '') {
+            $pages = $pdf->getPages();
+            foreach ($pages as $page) {
+                $text .= $page->getText();
+            }
+        }
+
+        $text = trim($text);
         $text = preg_replace('/[ \t]+/', ' ', $text);
         $text = preg_replace("/\n{3,}/", "\n\n", $text);
         $text = trim((string) $text);
+
+        if ($text === '') {
+            $pageCount = count($pdf->getPages());
+            if ($pageCount > 0) {
+                return response()->json(['success' => false, 'message' => "PDF has {$pageCount} pages but no extractable text. It might be a scanned image or protected."], 422);
+            }
+            return response()->json(['success' => false, 'message' => 'PDF text was empty.'], 422);
+        }
     } catch (\Throwable $e) {
         \Illuminate\Support\Facades\Log::error('KB block PDF parse failed', ['error' => $e->getMessage()]);
         return response()->json(['success' => false, 'message' => 'Could not parse PDF.'], 422);
-    }
-
-    if ($text === '') {
-        return response()->json(['success' => false, 'message' => 'PDF text was empty.'], 422);
     }
 
     $text = mb_substr($text, 0, 160000);
