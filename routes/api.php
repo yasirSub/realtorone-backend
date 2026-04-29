@@ -563,7 +563,7 @@ Route::post('/admin/ai/settings/knowledge-base-pdf', function (Request $request)
     }
 
     $validated = $request->validate([
-        'pdf' => 'required|file|mimetypes:application/pdf|max:10240',
+        'pdf' => 'required|file|mimes:pdf|max:51200',
         'mode' => 'nullable|string|in:append,replace',
         'title' => 'nullable|string|max:120',
     ]);
@@ -641,7 +641,7 @@ Route::post('/admin/ai/settings/kb-block/{blockId}/pdf', function (Request $requ
     }
 
     $validated = $request->validate([
-        'pdf' => 'required|file|mimetypes:application/pdf|max:10240',
+        'pdf' => 'required|file|mimes:pdf|max:51200',
         'title' => 'nullable|string|max:120',
     ]);
 
@@ -695,10 +695,26 @@ Route::post('/admin/ai/settings/kb-block/{blockId}/pdf', function (Request $requ
     unset($b);
 
     if (!$found) {
-        return response()->json(['success' => false, 'message' => 'Dataset not found'], 404);
+        $kbBlocks[] = [
+            'id' => $blockId,
+            'title' => mb_substr($title, 0, 120),
+            'content' => mb_substr($blockContent, 0, 200000),
+            'enabled' => true,
+        ];
     }
 
     cache(['ai_kb_blocks' => json_encode($kbBlocks)], now()->addYears(5));
+
+    // Synchronize the main KB text for backward compatibility / double-store consistency
+    $joined = [];
+    foreach ($kbBlocks as $b) {
+        if (!is_array($b) || !($b['enabled'] ?? true)) continue;
+        $t = trim((string) ($b['title'] ?? ''));
+        $c = trim((string) ($b['content'] ?? ''));
+        if ($c === '') continue;
+        $joined[] = ($t !== '' ? "## " . $t . "\n" . $c : $c);
+    }
+    cache(['ai_custom_knowledge_base' => implode("\n\n---\n\n", $joined)], now()->addYears(5));
 
     return response()->json([
         'success' => true,
