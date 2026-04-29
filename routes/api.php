@@ -2495,6 +2495,16 @@ Route::get('/activity-types', function (Request $request) {
             $type->mcq_correct_option = $selectedLog->mcq_correct_option ?? null;
             $type->has_daily_log = $selectedLog !== null;
 
+            // Check tier-based Momentum AI allowance
+            $tier = (string)($user->membership_tier ?? 'Consultant');
+            $isAllowedByTier = true;
+            if ($tier === 'Titan') $isAllowedByTier = (bool)cache('ai_momentum_allow_titan', true);
+            elseif ($tier === 'Rainmaker') $isAllowedByTier = (bool)cache('ai_momentum_allow_rainmaker', true);
+            else $isAllowedByTier = (bool)cache('ai_momentum_allow_consultant', true);
+
+            // AI is enabled only if the log allows it AND the tier allows it.
+            $type->ai_enabled = $isAllowedByTier && (bool)($selectedLog->ai_enabled ?? true);
+
             return $type;
         });
     }
