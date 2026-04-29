@@ -364,7 +364,6 @@ PROMPT;
     {
         return (bool) cache('ai_use_course_kb', true);
     }
-
     private function isAiAllowedForUser(?User $user): bool
     {
         if (! $user) return true;
@@ -372,6 +371,15 @@ PROMPT;
         if ($tier === 'Titan') return (bool) cache('ai_allow_titan', true);
         if ($tier === 'Rainmaker') return (bool) cache('ai_allow_rainmaker', true);
         return (bool) cache('ai_allow_consultant', true);
+    }
+
+    private function isMomentumAiAllowedForUser(?User $user): bool
+    {
+        if (! $user) return true;
+        $tier = (string) ($user->membership_tier ?: 'Consultant');
+        if ($tier === 'Titan') return (bool) cache('ai_momentum_allow_titan', true);
+        if ($tier === 'Rainmaker') return (bool) cache('ai_momentum_allow_rainmaker', true);
+        return (bool) cache('ai_momentum_allow_consultant', true);
     }
 
     private function appendUpgradeSuggestionIfBlocked(string $reply, ?User $user): string
@@ -776,6 +784,112 @@ PROMPT;
                 'success' => false,
                 'message' => 'Something went wrong. Please try again.',
             ], 500);
+        }
+    }
+
+    public function consultAiAdvisor(Request $request): JsonResponse
+    {
+        $user = getAuthUser($request);
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        if (!$this->isMomentumAiAllowedForUser($user)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'AI Advisor is not available for your current membership tier. Please upgrade to access this feature.',
+                'needs_upgrade' => true
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'task_title' => 'required|string|max:200',
+            'task_description' => 'nullable|string|max:2000',
+            'script_idea' => 'nullable|string|max:2000',
+        ]);
+
+        $taskTitle = $validated['task_title'];
+        $taskDesc = $validated['task_description'] ?? '';
+        $scriptIdea = $validated['script_idea'] ?? '';
+
+        // Create or get an AI Advisor session for today
+        $sessionTitle = "AI Advisor: " . Str::limit($taskTitle, 40);
+        $session = ChatSession::updateOrCreate(
+            [
+                'user_id' => $user->id, 
+                'title' => $sessionTitle, 
+                'created_at' => [now()->startOfDay(), now()->endOfDay()]
+            ],
+            ['user_id' => $user->id, 'title' => $sessionTitle]
+        );
+
+        $userPrompt = "Task: {$taskTitle}\nDescription: {$taskDesc}\nScript/Idea: {$scriptIdea}\n\nCan you give me some advice or a suggestion on how to reply or complete this based on your knowledge base?";
+        
+        // Log user message
+        ChatMessage::create([
+            'chat_session_id' => $session->id,
+            'user_id' => $user->id,
+            'role' => 'user',
+            'content' => $userPrompt,
+        ]);
+
+        $apiKey = $this->getRuntimeOpenAiKey();
+        if ($this->getRuntimeProvider() === 'disabled' || !$apiKey) {
+            $reply = "I'm currently in maintenance mode. Please try again later.";
+            ChatMessage::create([
+                'chat_session_id' => $session->id,
+                'user_id' => null,
+                'role' => 'assistant',
+                'content' => $reply,
+            ]);
+            return response()->json(['success' => true, 'reply' => $reply]);
+        }
+
+        try {
+            $systemContent = $this->getSystemPrompt($user, $this->getRuntimeKnowledgeBase());
+            $systemContent .= "\n\nYou are acting as a strategic real estate advisor. A user is asking for advice on a specific daily task. Use the provided task details and the knowledge base to give a practical, high-converting suggestion.";
+
+            $openaiMessages = [
+                ['role' => 'system', 'content' => $systemContent],
+                ['role' => 'user', 'content' => $userPrompt]
+            ];
+
+            $modelToUse = $this->getRuntimeOpenAiModel();
+            $url = $this->getRuntimeChatCompletionsUrl();
+
+            $response = $this->applyProviderHeaders(Http::withToken($apiKey))
+                ->timeout(60)
+                ->post($url, [
+                    'model' => $modelToUse,
+                    'messages' => $openaiMessages,
+                    'max_tokens' => 800,
+                ]);
+
+            if (!$response->successful()) {
+                return response()->json(['success' => false, 'message' => 'AI Advisor is currently unavailable.'], 502);
+            }
+
+            $data = $response->json();
+            $reply = trim($data['choices'][0]['message']['content'] ?? '');
+            $usage = $data['usage'] ?? [];
+
+            // Log assistant message
+            ChatMessage::create([
+                'chat_session_id' => $session->id,
+                'user_id' => null,
+                'role' => 'assistant',
+                'content' => $reply,
+                'prompt_tokens' => $usage['prompt_tokens'] ?? null,
+                'completion_tokens' => $usage['completion_tokens'] ?? null,
+                'total_tokens' => $usage['total_tokens'] ?? null,
+                'model' => $data['model'] ?? $modelToUse,
+            ]);
+
+            return response()->json(['success' => true, 'reply' => $reply]);
+
+        } catch (\Throwable $e) {
+            Log::error('AI Advisor Error', ['error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => 'Something went wrong.'], 500);
         }
     }
 

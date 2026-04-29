@@ -456,6 +456,9 @@ Route::get('/admin/ai/settings', function (Request $request) {
     $allowConsultant = (bool) cache('ai_allow_consultant', true);
     $allowRainmaker = (bool) cache('ai_allow_rainmaker', true);
     $allowTitan = (bool) cache('ai_allow_titan', true);
+    $momAllowConsultant = (bool) cache('ai_momentum_allow_consultant', true);
+    $momAllowRainmaker = (bool) cache('ai_momentum_allow_rainmaker', true);
+    $momAllowTitan = (bool) cache('ai_momentum_allow_titan', true);
 
     return response()->json([
         'success' => true,
@@ -476,6 +479,11 @@ Route::get('/admin/ai/settings', function (Request $request) {
                 'Consultant' => $allowConsultant,
                 'Rainmaker' => $allowRainmaker,
                 'Titan' => $allowTitan,
+            ],
+            'momentum_ai_tier_allow' => [
+                'Consultant' => $momAllowConsultant,
+                'Rainmaker' => $momAllowRainmaker,
+                'Titan' => $momAllowTitan,
             ],
         ],
     ]);
@@ -502,10 +510,11 @@ Route::post('/admin/ai/settings', function (Request $request) {
         'kb_sources' => 'nullable|array',
         'kb_sources.custom' => 'nullable|boolean',
         'kb_sources.courses' => 'nullable|boolean',
-        'tier_allow' => 'nullable|array',
-        'tier_allow.Consultant' => 'nullable|boolean',
-        'tier_allow.Rainmaker' => 'nullable|boolean',
         'tier_allow.Titan' => 'nullable|boolean',
+        'momentum_ai_tier_allow' => 'nullable|array',
+        'momentum_ai_tier_allow.Consultant' => 'nullable|boolean',
+        'momentum_ai_tier_allow.Rainmaker' => 'nullable|boolean',
+        'momentum_ai_tier_allow.Titan' => 'nullable|boolean',
     ]);
 
     $provider = trim((string) ($validated['provider'] ?? 'openai'));
@@ -523,6 +532,7 @@ Route::post('/admin/ai/settings', function (Request $request) {
     $kbBlocks = is_array($validated['kb_blocks'] ?? null) ? $validated['kb_blocks'] : null;
     $kbSources = is_array($validated['kb_sources'] ?? null) ? $validated['kb_sources'] : [];
     $tierAllow = is_array($validated['tier_allow'] ?? null) ? $validated['tier_allow'] : [];
+    $momentumAiTierAllow = is_array($validated['momentum_ai_tier_allow'] ?? null) ? $validated['momentum_ai_tier_allow'] : [];
 
     cache(['ai_provider' => $provider], now()->addYears(5));
     cache(['ai_openai_model' => $model], now()->addYears(5));
@@ -570,6 +580,15 @@ Route::post('/admin/ai/settings', function (Request $request) {
     }
     if (array_key_exists('Titan', $tierAllow)) {
         cache(['ai_allow_titan' => (bool) $tierAllow['Titan']], now()->addYears(5));
+    }
+    if (array_key_exists('Consultant', $momentumAiTierAllow)) {
+        cache(['ai_momentum_allow_consultant' => (bool) $momentumAiTierAllow['Consultant']], now()->addYears(5));
+    }
+    if (array_key_exists('Rainmaker', $momentumAiTierAllow)) {
+        cache(['ai_momentum_allow_rainmaker' => (bool) $momentumAiTierAllow['Rainmaker']], now()->addYears(5));
+    }
+    if (array_key_exists('Titan', $momentumAiTierAllow)) {
+        cache(['ai_momentum_allow_titan' => (bool) $momentumAiTierAllow['Titan']], now()->addYears(5));
     }
 
     return response()->json([
@@ -2749,6 +2768,7 @@ Route::post('/admin/activity-types/{id}/daily-logs/bulk', function (Request $req
             'day_title' => $entry['day_title'] ?? null,
             'task_title' => $entry['task_title'] ?? null,
             'script_title' => $entry['script_title'] ?? null,
+            'ai_enabled' => isset($entry['ai_enabled']) ? (bool) $entry['ai_enabled'] : true,
             'task_description' => $entry['task_description'] ?? null,
             'script_idea' => $entry['script_idea'] ?? null,
             'feedback' => $entry['feedback'] ?? null,
@@ -2772,7 +2792,7 @@ Route::post('/admin/activity-types/{id}/daily-logs/bulk', function (Request $req
     DB::table('activity_type_daily_logs')->upsert(
         $rows,
         ['activity_type_id', 'day_number'],
-        ['day_title', 'task_title', 'script_title', 'task_description', 'script_idea', 'feedback', 'audio_url', 'required_listen_percent', 'require_user_response', 'notification_enabled', 'morning_reminder_enabled', 'evening_reminder_enabled', 'morning_reminder_time', 'evening_reminder_time', 'is_mcq', 'mcq_question', 'mcq_options', 'mcq_correct_option', 'updated_at']
+        ['day_title', 'task_title', 'script_title', 'ai_enabled', 'task_description', 'script_idea', 'feedback', 'audio_url', 'required_listen_percent', 'require_user_response', 'notification_enabled', 'morning_reminder_enabled', 'evening_reminder_enabled', 'morning_reminder_time', 'evening_reminder_time', 'is_mcq', 'mcq_question', 'mcq_options', 'mcq_correct_option', 'updated_at']
     );
 
     return response()->json([
@@ -2800,6 +2820,39 @@ Route::get('/admin/daily-logs/all-reminders', function () {
         'data' => $reminders,
     ]);
 });
+
+// ============== MOMENTUM (Mobile App) ==============
+
+Route::get('/momentum/daily-logs', function (Request $request) {
+    $user = getAuthUser($request);
+    if (!$user) return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+
+    $tier = (string)($user->membership_tier ?: 'Consultant');
+    $isAllowedByTier = false;
+    if ($tier === 'Titan') $isAllowedByTier = (bool)cache('ai_momentum_allow_titan', true);
+    elseif ($tier === 'Rainmaker') $isAllowedByTier = (bool)cache('ai_momentum_allow_rainmaker', true);
+    else $isAllowedByTier = (bool)cache('ai_momentum_allow_consultant', true);
+
+    // Get all daily logs for the user's active activities
+    $logs = DB::table('activity_type_daily_logs')
+        ->join('activity_types', 'activity_types.id', '=', 'activity_type_daily_logs.activity_type_id')
+        ->where('activity_types.is_active', true)
+        ->select('activity_type_daily_logs.*', 'activity_types.name', 'activity_types.type_key')
+        ->get()
+        ->map(function($log) use ($isAllowedByTier) {
+            if ($log->mcq_options) {
+                $log->mcq_options = json_decode($log->mcq_options);
+            }
+            // The task's AI Advisor is ONLY enabled if BOTH the specific task toggle is ON 
+            // AND the user's tier has permission.
+            $log->ai_enabled = ((bool)($log->ai_enabled ?? true)) && $isAllowedByTier;
+            return (array)$log;
+        });
+
+    return response()->json(['success' => true, 'data' => $logs]);
+});
+
+Route::post('/momentum/ai-advisor', [\App\Http\Controllers\ChatController::class, 'consultAiAdvisor']);
 
 Route::get('/admin/notifications/workflow-triggers', function () {
     $triggers = DB::table('notification_workflow_triggers')->get();
